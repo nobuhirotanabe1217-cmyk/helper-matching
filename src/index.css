@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', 'Noto Sans JP', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    overflow-x: hidden;
+    min-height: 100dvh;
+    background-color: #f8fafc;
+    color: #0f172a;
+  }
+
+  .font-mono,
+  .tabular-nums {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* 視覚障害・キーボード操作ユーザー向けの明確なフォーカスリング */
+:focus-visible {
+  outline: 3px solid #0f766e;
+  outline-offset: 2px;
+}
+
+/* 大きめ文字モード */
+html.a11y-large-text {
+  font-size: 18px;
+}
+
+/* 高コントラスト＆太枠フォーカス表示（弱視・ロービジョン対応） */
+html.a11y-high-contrast body {
+  background-color: #ffffff;
+  color: #020617;
+}
+
+html.a11y-high-contrast :focus-visible {
+  outline: 4px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+html.a11y-high-contrast .text-slate-400,
+html.a11y-high-contrast .text-slate-500,
+html.a11y-high-contrast .text-slate-600 {
+  color: #1e293b !important;
+}
+
+html.a11y-high-contrast .border-slate-200,
+html.a11y-high-contrast .border-slate-100 {
+  border-color: #64748b !important;
+}
+
+html.a11y-high-contrast button.underline,
+html.a11y-high-contrast a {
+  text-decoration-thickness: 2px;
+}
+
+/* アニメーション酔い・スクリーンリーダー負担軽減 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

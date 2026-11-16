@@ -1,0 +1,140 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // 共通ヘルパー関数 (原則拒否・ゼロトラスト設計)
+    // =========================================================================
+
+    // 認証済みか確認
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // ユーザーロールの確認（カスタムクレームまたはセッション情報）
+    function hasRole(role) {
+      return isAuthenticated() && request.auth.token.role == role;
+    }
+
+    // 自身のユーザーIDか確認
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 運営管理者か確認 (最小限の権限。PIIの無制限読み取りは拒否)
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    // デフォルト・初期状態: 原則すべての直接アクセスを拒否
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 領域 A: 本人特定情報 (PII) - 最重要機密
+    // 氏名・電話番号・メール・詳細住所
+    // =========================================================================
+    match /users_pii/{userId} {
+      // 本人のみ読み取り・更新可能。事業所や外部は直接アクセス一切不可
+      // 管理者であっても無制限の一括エクスポートや直接閲覧は拒否
+      allow read, update: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // 特定事業所への限定開示アクセス (第3段階で明示同意がある場合のみサーバー経由)
+      // client-side からの事業所による直接のusers_piiクエリは完全にブロック
+    }
+
+    // =========================================================================
+    // 領域 B: 支援ニーズ・照合用公開情報 (Public Matching Profile)
+    // 匿名コード・市区町村・希望サービス・介助項目
+    // =========================================================================
+    match /users_public_profile/{userId} {
+      // 本人は編集可能
+      allow create, update, delete: if isOwner(userId);
+
+      // 事業所ユーザーおよび本人は、匿名プロファイルのみ検索・閲覧可能
+      allow get, list: if isAuthenticated() && (isOwner(userId) || hasRole('provider') || isAdmin());
+    }
+
+    match /users_support_needs/{userId} {
+      allow create, update, delete: if isOwner(userId);
+      allow get, list: if isAuthenticated() && (isOwner(userId) || hasRole('provider') || isAdmin());
+    }
+
+    match /users_preferences/{userId} {
+      allow create, update, delete: if isOwner(userId);
+      allow get, list: if isAuthenticated() && (isOwner(userId) || hasRole('provider') || isAdmin());
+    }
+
+    // =========================================================================
+    // 事業所データ
+    // =========================================================================
+    match /providers/{providerId} {
+      // 登録・更新はその事業所自身のみ
+      allow write: if isAuthenticated() && request.auth.uid == providerId;
+      // 利用者および事業所は検索のために閲覧可能
+      allow read: if isAuthenticated();
+    }
+
+    match /provider_capabilities/{providerId} {
+      allow write: if isAuthenticated() && request.auth.uid == providerId;
+      allow read: if isAuthenticated();
+    }
+
+    match /provider_availability/{providerId} {
+      allow write: if isAuthenticated() && request.auth.uid == providerId;
+      allow read: if isAuthenticated();
+    }
+
+    // =========================================================================
+    // 情報開示への同意レコード (3段階開示)
+    // =========================================================================
+    match /disclosure_consents/{consentId} {
+      // consentId: {userId}_{providerId}
+      // 利用者本人のみ同意の付与・取消（Stage 1/2/3）が可能
+      allow create, update, delete: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+
+      // 利用者本人または指定された事業所のみ閲覧可能
+      allow get: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow list: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid
+      );
+    }
+
+    // =========================================================================
+    // チャットメッセージ
+    // =========================================================================
+    match /chat_messages/{messageId} {
+      // 送信者は当事者（利用者本人または事業所本人）であること
+      allow create: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.providerId == request.auth.uid
+      );
+
+      // 当事者のみ閲覧可能（他者のメッセージは一切漏洩しない）
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid
+      );
+    }
+
+    // =========================================================================
+    // 監査ログ (Audit Logs)
+    // サーバーサイド・Cloud Functions経由でのみ追加。クライアントからの改ざん・削除不可
+    // =========================================================================
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      // クライアントからのログ書き換え・削除は原則禁止
+      allow create, update, delete: if false;
+    }
+  }
+}

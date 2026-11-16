@@ -1,0 +1,621 @@
+import React, { useState } from 'react';
+import {
+  ArrowRight,
+  MessageSquare,
+  SlidersHorizontal,
+  RotateCcw,
+  ShieldCheck,
+  MapPin,
+  Calendar,
+  Lock,
+  Send,
+  Check,
+  Sparkles,
+  Clock,
+} from 'lucide-react';
+import { useAppState } from '../context/AppStateContext';
+import {
+  AREA_OPTIONS,
+  CaseManagementStatus,
+  CHAT_TEMPLATES_PROVIDER,
+  DayOfWeek,
+  DAYS_OF_WEEK,
+  SERVICE_TYPES,
+  ServiceType,
+} from '../types/domain';
+import { calculateMatchResult } from '../utils/matching';
+import {
+  CareNeedsIconGrid,
+  MatchScoreRing,
+  ServiceIllustration,
+  WeeklyDayStrip,
+} from './VisualHelpers';
+import { HelpTooltip } from './HelpTooltip';
+import { SpeechButton } from './SpeechButton';
+import {
+  buildProviderSearchSpeechText,
+  buildUserDetailForProviderSpeechText,
+} from '../utils/speech';
+
+const CASE_STATUSES: CaseManagementStatus[] = [
+  '未対応',
+  '検討中',
+  '対応中',
+  '対応不可',
+];
+
+export const ProviderSearchUsers: React.FC = () => {
+  const {
+    activeProviderId,
+    currentProviderBundle,
+    currentProviderPlanDef,
+    isCurrentProviderPaid,
+    userProfiles,
+    getUserBundleById,
+    interactions,
+    getDisclosureStage,
+    getChatRequestBetween,
+    sendChatRequest,
+    updateCaseManagementStatus,
+    openUserDetailForProvider,
+    openChatWith,
+    setShowChatUpgradeModal,
+    navigateTo,
+    openRegistrationScreen,
+  } = useAppState();
+
+  const [filterService, setFilterService] = useState<ServiceType | 'all'>('all');
+  const [filterArea, setFilterArea] = useState<string>('all');
+  const [filterDay, setFilterDay] = useState<DayOfWeek | 'all'>('all');
+  const [showFilters, setShowFilters] = useState<boolean>(false);
+
+  // チャット開始申請フォーム用ステート（有料プラン事業所向け）
+  const [requestingUserId, setRequestingUserId] = useState<string | null>(null);
+  const [requestMessageText, setRequestMessageText] = useState<string>(
+    CHAT_TEMPLATES_PROVIDER[0]
+  );
+  const [requestSentBanner, setRequestSentBanner] = useState<string>('');
+
+  const resetFilters = () => {
+    setFilterService('all');
+    setFilterArea('all');
+    setFilterDay('all');
+  };
+
+  const evaluatedUsers = userProfiles
+    .map((u) => {
+      const bundle = getUserBundleById(u.id);
+      if (!bundle) return null;
+      const match = calculateMatchResult(bundle, currentProviderBundle);
+      const interaction = interactions.find(
+        (i) => i.userId === u.id && i.providerId === activeProviderId
+      );
+      const disclosure = getDisclosureStage(u.id, activeProviderId);
+      const chatReq = getChatRequestBetween(u.id, activeProviderId);
+      return {
+        bundle,
+        match,
+        caseStatus: interaction?.caseStatus || '未対応',
+        isUserFavoritedUs: Boolean(interaction?.isUserFavorite),
+        disclosure,
+        chatReq,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .filter((item) => {
+      if (filterService !== 'all') {
+        if (!item.bundle.needs.desiredServices.includes(filterService)) {
+          return false;
+        }
+      }
+      if (filterArea !== 'all') {
+        if (
+          item.bundle.profile.city !== filterArea &&
+          !item.bundle.preferences.preferredAreas.includes(filterArea)
+        ) {
+          return false;
+        }
+      }
+      if (filterDay !== 'all') {
+        if (!item.bundle.preferences.preferredDays.includes(filterDay)) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (
+        a.match.judgment === 'マッチング対象外' &&
+        b.match.judgment !== 'マッチング対象外'
+      ) {
+        return 1;
+      }
+      if (
+        a.match.judgment !== 'マッチング対象外' &&
+        b.match.judgment === 'マッチング対象外'
+      ) {
+        return -1;
+      }
+      return b.match.breakdown.totalScore - a.match.breakdown.totalScore;
+    });
+
+  const handleOpenChatOrRequest = (userId: string) => {
+    if (!isCurrentProviderPaid) {
+      setShowChatUpgradeModal(true);
+      return;
+    }
+    const existingReq = getChatRequestBetween(userId, activeProviderId);
+    if (existingReq?.status === 'approved') {
+      openChatWith(userId);
+      return;
+    }
+    setRequestingUserId(userId);
+    setRequestMessageText(CHAT_TEMPLATES_PROVIDER[0]);
+  };
+
+  const handleSubmitChatRequest = (userId: string, anonymousCode: string) => {
+    sendChatRequest(userId, activeProviderId, 'provider', requestMessageText);
+    setRequestingUserId(null);
+    setRequestSentBanner(
+      `「${anonymousCode}」へチャット開始申請を送信しました。ご本人・ご家族が承認するとチャットが開始できます。`
+    );
+    setTimeout(() => setRequestSentBanner(''), 5000);
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
+      {/* ヘッダー＆現在のプラン案内 */}
+      <section className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs sm:text-sm font-bold text-teal-800">
+                {currentProviderBundle.profile.name}
+              </span>
+              <span
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
+                  isCurrentProviderPaid
+                    ? 'bg-teal-800 text-white'
+                    : 'bg-slate-200 text-slate-800'
+                }`}
+              >
+                {currentProviderPlanDef.name}
+              </span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
+              匿名化された利用希望者情報の閲覧
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              無料登録の事業所様も、地域の支援ニーズと適合度（％）をご確認いただけます。個人特定の防止のため、氏名・詳細住所・連絡先・自由記述の詳細は非公開です。
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {!isCurrentProviderPaid && (
+              <button
+                type="button"
+                onClick={() => navigateTo('provider-billing')}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl border border-teal-700 bg-teal-50/70 hover:bg-teal-100 text-teal-950 text-xs font-bold shrink-0 cursor-pointer"
+              >
+                有料プランの詳細を見る →
+              </button>
+            )}
+            <SpeechButton
+              speechId="screen-provider-search"
+              isPrimaryScreenReader
+              tone="indigo"
+              getText={() =>
+                buildProviderSearchSpeechText({
+                  providerName: currentProviderBundle.profile.name,
+                  planName: currentProviderPlanDef.name,
+                  resultCount: evaluatedUsers.length,
+                  topUser: evaluatedUsers[0]
+                    ? {
+                        anonymousCode: evaluatedUsers[0].bundle.profile.anonymousCode,
+                        city: evaluatedUsers[0].bundle.profile.city,
+                        score: evaluatedUsers[0].match.breakdown.totalScore,
+                      }
+                    : undefined,
+                })
+              }
+            />
+            <HelpTooltip guideKey="provider-search" tone="indigo" />
+          </div>
+        </div>
+
+        {requestSentBanner && (
+          <div
+            role="status"
+            className="p-4 rounded-2xl bg-teal-50 border-2 border-teal-700 text-teal-950 font-bold text-sm"
+          >
+            {requestSentBanner}
+          </div>
+        )}
+
+        {/* 絞り込みバー */}
+        <div className="pt-2 border-t border-slate-100 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setShowFilters(!showFilters)}
+              aria-expanded={showFilters}
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer"
+            >
+              <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+              <span>
+                条件で絞り込む{showFilters ? '（閉じる）' : '（開く）'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="min-h-[40px] px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+              リセット
+            </button>
+          </div>
+
+          {showFilters && (
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div className="space-y-1">
+                <label
+                  htmlFor="prov-filter-service"
+                  className="block text-xs font-bold text-slate-700"
+                >
+                  希望サービス
+                </label>
+                <select
+                  id="prov-filter-service"
+                  value={filterService}
+                  onChange={(e) =>
+                    setFilterService(e.target.value as ServiceType | 'all')
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-900"
+                >
+                  <option value="all">すべてのサービス</option>
+                  {SERVICE_TYPES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="prov-filter-area"
+                  className="block text-xs font-bold text-slate-700"
+                >
+                  希望地域（杉並・中野・練馬など）
+                </label>
+                <select
+                  id="prov-filter-area"
+                  value={filterArea}
+                  onChange={(e) => setFilterArea(e.target.value)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-900"
+                >
+                  <option value="all">すべての地域</option>
+                  {AREA_OPTIONS.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="prov-filter-day"
+                  className="block text-xs font-bold text-slate-700"
+                >
+                  希望曜日
+                </label>
+                <select
+                  id="prov-filter-day"
+                  value={filterDay}
+                  onChange={(e) =>
+                    setFilterDay(e.target.value as DayOfWeek | 'all')
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-900"
+                >
+                  <option value="all">すべての曜日</option>
+                  {DAYS_OF_WEEK.map((d) => (
+                    <option key={d} value={d}>
+                      {d}曜日
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 利用希望者カード一覧（指示書 第4章の表示項目に準拠） */}
+      {userProfiles.length === 0 && (
+        <div className="bg-white border-2 border-dashed border-teal-300 rounded-3xl p-8 text-center space-y-4">
+          <p className="text-lg font-extrabold text-slate-900">
+            まだ利用希望者が登録されていません（0名）
+          </p>
+          <p className="text-xs sm:text-sm text-slate-600">
+            マッチングやチャット申請をテストするには、続けてテスト用の「利用者」を新規登録してください。
+          </p>
+          <button
+            type="button"
+            onClick={() => openRegistrationScreen('user')}
+            className="min-h-[48px] px-6 py-3 rounded-2xl bg-teal-800 hover:bg-teal-900 text-white font-extrabold text-sm cursor-pointer"
+          >
+            ＋ 利用者を新規登録してテストする
+          </button>
+        </div>
+      )}
+      <div className="space-y-4">
+        {evaluatedUsers.map(
+          ({
+            bundle,
+            match,
+            caseStatus,
+            isUserFavoritedUs,
+            disclosure,
+            chatReq,
+          }) => {
+            const { profile, needs, preferences } = bundle;
+            const timeLabels = preferences.preferredTimeSlots
+              .map((s) => s.split('（')[0])
+              .join('・');
+
+            return (
+              <article
+                key={profile.id}
+                className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 space-y-4"
+              >
+                <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div className="flex items-start gap-3.5 min-w-0">
+                    <ServiceIllustration
+                      service={needs.desiredServices[0] || '居宅介護'}
+                      className="w-12 h-12 sm:w-14 sm:h-14 shrink-0"
+                    />
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
+                        <span className="font-bold text-teal-800">
+                          希望サービス：{needs.desiredServices.join(' / ')}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          登録時期：{profile.registeredAt || '2026年11月'}
+                        </span>
+                        {profile.isNewArrival && (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[11px]">
+                            <Sparkles className="w-3 h-3" />
+                            新着
+                          </span>
+                        )}
+                        {disclosure.stage === 3 && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="text-teal-900 font-bold inline-flex items-center gap-1">
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              本人同意で詳細開示中
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+                        {profile.anonymousCode}
+                        {isCurrentProviderPaid && (
+                          <span className="text-sm font-medium text-slate-600 ml-2">
+                            （{profile.ageGroup}・{profile.gender}・区分：
+                            {needs.supportCategory}）
+                          </span>
+                        )}
+                      </h2>
+
+                      <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-slate-700 font-medium">
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-teal-700" />
+                          希望地域：{profile.city}
+                        </span>
+                        <span>
+                          希望時間帯：{timeLabels}（{preferences.frequency}）
+                        </span>
+                      </div>
+
+                      {isUserFavoritedUs && (
+                        <p className="text-xs font-bold text-amber-800 pt-0.5">
+                          ★貴事業所を「気になる」に保存しています
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <MatchScoreRing
+                    score={match.breakdown.totalScore}
+                    judgment={match.judgment}
+                    size="md"
+                  />
+                </div>
+
+                {/* 中段：主な支援ニーズ＆希望曜日ストリップ */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-50/70 rounded-2xl p-3.5 border border-slate-100">
+                  <div className="md:col-span-7 space-y-1.5">
+                    <span className="text-xs font-bold text-slate-500 block">
+                      主な支援ニーズ（✓＝貴事業所で対応可）：
+                    </span>
+                    <CareNeedsIconGrid
+                      items={needs.careNeeds}
+                      supportedItems={
+                        currentProviderBundle.capabilities.supportedCareItems
+                      }
+                    />
+                  </div>
+
+                  <div className="md:col-span-5 flex flex-col sm:flex-row md:flex-col items-start sm:items-center md:items-end justify-between gap-1.5">
+                    <span className="text-xs font-bold text-slate-500 inline-flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" />
+                      希望曜日
+                    </span>
+                    <WeeklyDayStrip activeDays={preferences.preferredDays} />
+                  </div>
+                </div>
+
+                {/* 対応に必要な経験・配慮事項の概要（個人特定を防ぐ要約） */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs sm:text-sm text-slate-700 space-y-1">
+                  <span className="font-bold text-slate-900 block">
+                    対応に必要な経験・配慮事項の概要：
+                  </span>
+                  <p>
+                    {profile.briefSummaryForFreePlan ||
+                      `${needs.physicalConditions.join('・')} ／ ${
+                        preferences.helperGenderPreference
+                      }`}
+                  </p>
+                  {!isCurrentProviderPaid && (
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1 pt-1">
+                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                      個人の特定を防ぐため、無料プランでは年代・詳細な障害特性・自由記述の相談内容は非表示です。
+                    </p>
+                  )}
+                </div>
+
+                {/* チャット開始申請インラインフォーム（有料プランでボタンを押した際） */}
+                {requestingUserId === profile.id && isCurrentProviderPaid && (
+                  <div className="p-4 rounded-2xl bg-teal-50/70 border-2 border-teal-700 space-y-3">
+                    <p className="text-sm font-bold text-slate-900">
+                      「{profile.anonymousCode}」へチャット開始申請を送る
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      利用者・ご家族が申請を承認した場合にチャットが開始されます（承認されるまで個人情報は開示されません）。
+                    </p>
+                    <textarea
+                      rows={2}
+                      value={requestMessageText}
+                      onChange={(e) => setRequestMessageText(e.target.value)}
+                      className="w-full p-3 rounded-xl border border-slate-300 bg-white text-sm text-slate-900"
+                      aria-label="チャット開始申請の初回メッセージ"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSubmitChatRequest(
+                            profile.id,
+                            profile.anonymousCode
+                          )
+                        }
+                        className="min-h-[42px] px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        チャット開始申請を送信する
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRequestingUserId(null)}
+                        className="min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 font-bold text-xs sm:text-sm cursor-pointer"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 下段アクションボタン（案件ステータス管理 ＆ チャット開始申請） */}
+                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-500 mr-1">
+                      案件状況：
+                    </span>
+                    {CASE_STATUSES.map((st) => {
+                      const active = caseStatus === st;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => {
+                            if (!isCurrentProviderPaid) {
+                              setShowChatUpgradeModal(true);
+                              return;
+                            }
+                            updateCaseManagementStatus(
+                              profile.id,
+                              activeProviderId,
+                              st
+                            );
+                          }}
+                          className={`min-h-[38px] px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer ${
+                            active
+                              ? 'bg-teal-800 border-teal-800 text-white'
+                              : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          {st}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 justify-end">
+                    <SpeechButton
+                      compact
+                      tone="indigo"
+                      speechId={`prov-search-card-${profile.id}`}
+                      label="読み上げ"
+                      getText={() =>
+                        buildUserDetailForProviderSpeechText({
+                          anonymousCode: profile.anonymousCode,
+                          city: profile.city,
+                          desiredServices: needs.desiredServices,
+                          careNeeds: needs.careNeeds,
+                          preferredDays: preferences.preferredDays,
+                          score: match.breakdown.totalScore,
+                          judgment: match.judgment,
+                          disclosureStage: disclosure.stage,
+                        })
+                      }
+                    />
+                    {chatReq?.status === 'approved' ? (
+                      <button
+                        type="button"
+                        onClick={() => openChatWith(profile.id)}
+                        className="min-h-[46px] px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Check className="w-4 h-4" aria-hidden="true" />
+                        承認済・チャットを開く
+                      </button>
+                    ) : chatReq?.status === 'pending' &&
+                      isCurrentProviderPaid ? (
+                      <span className="min-h-[46px] px-4 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs font-bold flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-amber-800" aria-hidden="true" />
+                        チャット申請済（承認待ち）
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenChatOrRequest(profile.id)}
+                        className="min-h-[46px] px-4 py-2 rounded-xl border-2 border-teal-700 text-teal-900 bg-white hover:bg-teal-50 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
+                        <span>チャット開始申請</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => openUserDetailForProvider(profile.id)}
+                      className="min-h-[46px] px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>詳細を見る</span>
+                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          }
+        )}
+      </div>
+    </div>
+  );
+};

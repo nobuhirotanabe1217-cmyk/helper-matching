@@ -1,0 +1,6 @@
+{
+  "name": "ヘルパーマッチング - 障害福祉サービス利用者・事業所マッチング",
+  "description": "障害福祉サービス（移動支援・居宅介護・重度訪問介護・同行援護）の利用希望者とサービス提供事業所を具体的な支援ニーズと対応能力でつなぐマッチングプラットフォーム試作品。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
