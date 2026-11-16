@@ -14,6 +14,11 @@ import {
   Check,
   Plus,
   StickyNote,
+  BadgeCheck,
+  Clock,
+  AlertTriangle,
+  Sparkles,
+  CheckCircle2,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -27,7 +32,12 @@ import {
   TIME_SLOTS,
   TimeSlot,
 } from '../types/domain';
-import { calculateMatchResult } from '../utils/matching';
+import {
+  calculateMatchResult,
+  compareProvidersForUserSearch,
+} from '../utils/matching';
+import { formatJapaneseDate } from '../utils/date';
+import { isPaidPlanActive } from '../utils/subscription';
 import { countUserFavorites } from '../utils/favorites';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
@@ -65,6 +75,8 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
     currentUserBundle,
     providerProfiles,
     getProviderBundleById,
+    getProviderSubscription,
+    subscriptionPlans,
     interactions,
     toggleUserFavoriteProvider,
     updateUserFavoriteNote,
@@ -115,9 +127,12 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
       const interaction = interactions.find(
         (i) => i.userId === activeUserId && i.providerId === p.id
       );
+      const subscription = getProviderSubscription(p.id);
+      const isPaid = isPaidPlanActive(subscription, subscriptionPlans);
       return {
         bundle,
         match,
+        isPaid,
         isFavorite: Boolean(interaction?.isUserFavorite),
         favoriteNote: interaction?.userFavoriteNote || '',
         providerReaction: interaction?.providerReaction || '未対応',
@@ -181,27 +196,13 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
       }
       return true;
     })
-    .sort((a, b) => {
-      if (
-        a.match.judgment === 'マッチング対象外' &&
-        b.match.judgment !== 'マッチング対象外'
-      ) {
-        return 1;
-      }
-      if (
-        a.match.judgment !== 'マッチング対象外' &&
-        b.match.judgment === 'マッチング対象外'
-      ) {
-        return -1;
-      }
-      return b.match.breakdown.totalScore - a.match.breakdown.totalScore;
-    });
+    .sort((a, b) => compareProvidersForUserSearch(a, b, false));
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
       {/* ヘッダー＆自分の条件コンパクト表示 */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3.5">
+        <div className="flex flex-col gap-3.5">
           <div className="space-y-1.5 min-w-0">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-teal-900 text-white text-xs font-bold">
               {favoritesOnly ? (
@@ -228,7 +229,7 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             {/* クイック切替セグメント */}
             <div
               role="group"
@@ -565,8 +566,19 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
       ) : (
         <div className="space-y-4">
           {evaluatedProviders.map(
-            ({ bundle, match, isFavorite, favoriteNote, providerReaction }) => {
+            ({
+              bundle,
+              match,
+              isPaid,
+              isFavorite,
+              favoriteNote,
+              providerReaction,
+            }) => {
               const { profile, capabilities, availability } = bundle;
+              const updatedAt = profile.updatedAt || availability.updatedAt;
+              const hasDesignatedNumber = /^\d{10}$/.test(
+                (profile.designatedNumber || '').replace(/[-\s]/g, '')
+              );
               const availableDays = availability.weeklySchedule
                 .filter((d) => d.available)
                 .map((d) => d.day);
@@ -580,28 +592,55 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                 <article
                   key={profile.id}
                   data-testid={`provider-card-${profile.id}`}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4 shadow-2xs"
+                  className={`bg-white rounded-2xl p-5 sm:p-6 space-y-4 shadow-2xs border ${
+                    isPaid
+                      ? 'border-indigo-300 ring-1 ring-indigo-100'
+                      : 'border-slate-200'
+                  }`}
                 >
-                  {/* 上段：サービスアイコン＋事業所名＋円形相性リング */}
+                  {/* 上段：指定番号・最終更新日・サービスアイコン＋事業所名＋適合度リング */}
                   <div className="flex items-start justify-between gap-2.5 sm:gap-4 border-b border-slate-100 pb-4">
                     <div className="flex items-start gap-2.5 sm:gap-3.5 min-w-0 flex-1">
                       <ServiceIllustration
                         service={profile.serviceTypes[0] || '居宅介護'}
                         className="w-10 h-10 sm:w-14 sm:h-14 shrink-0"
                       />
-                      <div className="space-y-1 min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-slate-600">
-                          <span className="px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 font-bold text-teal-800 leading-snug">
-                            {availability.acceptanceStatus}
+                      <div className="space-y-1.5 min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs">
+                          {hasDesignatedNumber && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 font-bold text-teal-950 tabular-nums">
+                              <BadgeCheck className="w-3.5 h-3.5 text-teal-700 shrink-0" aria-hidden="true" />
+                              <span>事業所番号登録済み（{profile.designatedNumber}）</span>
+                            </span>
+                          )}
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-700 font-bold tabular-nums">
+                            <Clock className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
+                            <span>最終更新日：{formatJapaneseDate(updatedAt)}</span>
                           </span>
-                          <span className="font-medium text-slate-600">
-                            {profile.serviceTypes.join(' / ')}
-                          </span>
+                          {match.isStaleProvider && (
+                            <span
+                              data-testid={`stale-warning-${profile.id}`}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-950 font-bold tabular-nums"
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+                              <span>情報が古い可能性があります（{match.daysSinceUpdate}日経過）</span>
+                            </span>
+                          )}
+                          {isPaid && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-950 font-bold">
+                              <Sparkles className="w-3 h-3 text-indigo-700 shrink-0" aria-hidden="true" />
+                              <span>受入条件強調（※適合度スコア不変）</span>
+                            </span>
+                          )}
                         </div>
+
                         <h2 className="text-lg sm:text-xl font-bold text-slate-900 leading-snug">
                           {profile.name}
                         </h2>
                         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                          <span className="font-bold text-teal-900">
+                            {profile.serviceTypes.join(' / ')}
+                          </span>
                           <span className="inline-flex items-center gap-1">
                             <MapPin className="w-3.5 h-3.5 text-slate-400" />
                             {profile.coverageAreas.join('・')}
@@ -621,6 +660,32 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                     />
                   </div>
 
+                  {/* ひとことアピール（受入可能条件） */}
+                  {profile.appealMessage && (
+                    <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 text-xs sm:text-sm text-teal-950 font-bold flex items-start gap-2">
+                      <MessageSquare className="w-4 h-4 text-teal-800 shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>ひとことアピール：「{profile.appealMessage}」</span>
+                    </div>
+                  )}
+
+                  {/* あなたの希望と合っている点 */}
+                  {match.matchingPoints.length > 0 && (
+                    <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200 space-y-1.5">
+                      <p className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
+                        <span>あなたの希望と合っている点</span>
+                      </p>
+                      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs text-emerald-950 font-medium">
+                        {match.matchingPoints.slice(0, 4).map((pt, idx) => (
+                          <li key={idx} className="flex items-start gap-1.5">
+                            <span className="text-emerald-700 font-bold shrink-0">✓</span>
+                            <span>{pt}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {/* 中段：視覚的なアイコン照合（希望介助＆対応曜日カレンダー） */}
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-50/70 rounded-xl p-3.5 border border-slate-100">
                     <div className="md:col-span-7 space-y-1.5">
@@ -636,7 +701,7 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                     <div className="md:col-span-5 flex flex-col sm:flex-row md:flex-col items-start sm:items-center md:items-end justify-between gap-1.5">
                       <span className="text-xs font-bold text-slate-500 inline-flex items-center gap-1">
                         <Calendar className="w-3.5 h-3.5" />
-                        空き曜日（濃い色＝あなたの希望日と一致）
+                        受入可能曜日（濃い色＝希望日と一致）
                       </span>
                       <WeeklyDayStrip
                         activeDays={availableDays}
@@ -647,7 +712,7 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                     </div>
                   </div>
 
-                  {/* 5項目別◎○△×バーグラフ */}
+                  {/* 6項目別◎○△×バーグラフ */}
                   <MatchBreakdownBarGraph breakdown={match.breakdown} />
 
                   {/* 1行ポイント説明 */}

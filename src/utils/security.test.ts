@@ -54,6 +54,7 @@ test('SecurityController: PII Access RBAC & consent verification', () => {
     stage: 2,
     disclosedFields: {
       nicknameAndRole: true,
+      conditionProfile: true,
       nearestStationArea: true,
       preferredContactMethod: true,
       consultationSupportOffice: true,

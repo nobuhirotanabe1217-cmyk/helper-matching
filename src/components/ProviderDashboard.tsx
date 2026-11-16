@@ -11,6 +11,14 @@ import {
   UserPlus,
   Send,
   Check,
+  BadgeCheck,
+  Clock,
+  AlertTriangle,
+  RefreshCw,
+  Users,
+  BarChart3,
+  Trash2,
+  Filter,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -20,6 +28,19 @@ import {
   ProviderAcceptanceStatus,
 } from '../types/domain';
 import { calculateMatchResult } from '../utils/matching';
+import {
+  daysSinceIsoDate,
+  formatJapaneseDate,
+  getCurrentYearMonth,
+  isProviderStale,
+} from '../utils/date';
+import {
+  calculateRegionalDemandAnalytics,
+  CORE_SUBSCRIPTION_MESSAGE,
+  doesUserMatchProviderAcceptanceFilter,
+  isProPlanActive,
+  verifyProviderChatAccess,
+} from '../utils/subscription';
 import {
   CandidateCaseProgressBar,
   MatchBreakdownBarGraph,
@@ -59,14 +80,24 @@ export const ProviderDashboard: React.FC = () => {
     setActiveProviderId,
     currentProviderBundle,
     userProfiles,
+    userNeeds,
+    userPreferences,
     getUserBundleById,
     interactions,
     disclosures,
     chatRequests,
+    subscriptionPlans,
+    currentProviderSubscription,
     currentProviderPlanDef,
     isCurrentProviderPaid,
     getProviderSubscription,
     subscribeProviderToPlan,
+    markProviderUpdatedToday,
+    toggleProviderMatchFilter,
+    addProviderStaffMember,
+    removeProviderStaffMember,
+    addProviderBranch,
+    removeProviderBranch,
     sendChatRequest,
     navigateTo,
     openUserDetailForProvider,
@@ -80,8 +111,12 @@ export const ProviderDashboard: React.FC = () => {
 
   const [checkedSteps, setCheckedSteps] = useState<Record<number, boolean>>({});
   const [sentNotice, setSentNotice] = useState<string>('');
+  const [newStaffName, setNewStaffName] = useState<string>('');
+  const [newStaffRole, setNewStaffRole] = useState<string>('ホームヘルパー');
+  const [newBranchName, setNewBranchName] = useState<string>('');
+  const [newBranchCity, setNewBranchCity] = useState<string>('中野区');
+  const [newBranchNumber, setNewBranchNumber] = useState<string>('1311509999');
 
-  // 万一まだ事業所が0社の場合は事業所登録へ案内
   if (providerProfiles.length === 0) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-10">
@@ -96,7 +131,7 @@ export const ProviderDashboard: React.FC = () => {
             まだ事業所が登録されていません
           </h1>
           <p className="text-sm text-slate-600">
-            まずは事業所として新規登録を行ってください。
+            まずは指定事業所番号を入力して事業所を新規登録してください（掲載は無料です）。
           </p>
           <button
             type="button"
@@ -112,8 +147,25 @@ export const ProviderDashboard: React.FC = () => {
   }
 
   const { profile, capabilities, availability } = currentProviderBundle;
+  const updatedAt = profile.updatedAt || availability.updatedAt;
+  const staleProvider = isProviderStale(updatedAt);
+  const daysElapsed = daysSinceIsoDate(updatedAt);
+  const hasDesignatedNumber = /^\d{10}$/.test(
+    (profile.designatedNumber || '').replace(/[-\s]/g, '')
+  );
+  const isProPlan = isProPlanActive(
+    currentProviderSubscription,
+    subscriptionPlans
+  );
 
-  const candidateMatches = userProfiles
+  const chatQuotaCheck = verifyProviderChatAccess({
+    subscription: currentProviderSubscription,
+    plans: subscriptionPlans,
+    allProviderChatRequests: chatRequests,
+    currentYearMonth: getCurrentYearMonth(),
+  });
+
+  const allEvaluatedMatches = userProfiles
     .map((u) => {
       const uBundle = getUserBundleById(u.id);
       if (!uBundle) return null;
@@ -124,17 +176,41 @@ export const ProviderDashboard: React.FC = () => {
       const chatReq = chatRequests.find(
         (r) => r.userId === u.id && r.providerId === activeProviderId
       );
+      const matchesFilter = doesUserMatchProviderAcceptanceFilter({
+        providerProfile: profile,
+        providerCapabilities: capabilities,
+        providerAvailability: availability,
+        userNeeds: uBundle.needs,
+        userPreferences: uBundle.preferences,
+        userProfile: uBundle.profile,
+      });
       return {
         user: uBundle,
         result,
         caseStatus: interaction?.caseStatus || '未対応',
         chatReq,
+        matchesFilter,
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
     .sort(
       (a, b) => b.result.breakdown.totalScore - a.result.breakdown.totalScore
     );
+
+  const candidateMatches =
+    isCurrentProviderPaid && profile.filterOnlyMatchingRequests
+      ? allEvaluatedMatches.filter((m) => m.matchesFilter)
+      : allEvaluatedMatches;
+
+  const newArrivalAlerts = allEvaluatedMatches.filter(
+    (c) => c.user.profile.isNewArrival && c.result.breakdown.totalScore >= 70
+  );
+
+  const regionalAnalytics = calculateRegionalDemandAnalytics({
+    userProfiles,
+    userNeeds,
+    userPreferences,
+  });
 
   const myChatRequests = chatRequests.filter(
     (r) => r.providerId === activeProviderId
@@ -150,12 +226,12 @@ export const ProviderDashboard: React.FC = () => {
       i.providerId === activeProviderId &&
       (i.caseStatus === '対応中' || i.providerReaction === '対応を検討したい')
   ).length;
-  const declinedOrUnavailableCount = candidateMatches.filter(
+  const declinedOrUnavailableCount = allEvaluatedMatches.filter(
     (c) => c.caseStatus === '対応不可' || c.chatReq?.status === 'declined'
   ).length;
   const uncontactedCount = Math.max(
     0,
-    candidateMatches.length -
+    allEvaluatedMatches.length -
       Math.max(activeCasesCount, approvedRequestsCount) -
       waitingReplyCount -
       declinedOrUnavailableCount
@@ -165,7 +241,6 @@ export const ProviderDashboard: React.FC = () => {
     .filter((d) => d.available)
     .map((d) => d.day);
 
-  // 3ステップの完了状態
   const isStep1Done =
     checkedSteps[1] ??
     Boolean(
@@ -174,7 +249,7 @@ export const ProviderDashboard: React.FC = () => {
     );
   const isStep2Done = checkedSteps[2] ?? Boolean(availableDays.length >= 1);
   const isStep3Done =
-    checkedSteps[3] ?? Boolean(candidateMatches.length > 0);
+    checkedSteps[3] ?? Boolean(allEvaluatedMatches.length > 0);
   const completedStepsCount = [isStep1Done, isStep2Done, isStep3Done].filter(
     Boolean
   ).length;
@@ -186,36 +261,90 @@ export const ProviderDashboard: React.FC = () => {
     }));
   };
 
-  const handleQuickChatRequest = (userId: string, anonymousCode: string) => {
-    if (!isCurrentProviderPaid) {
-      setShowChatUpgradeModal(true);
-      return;
-    }
-    sendChatRequest(
-      userId,
-      activeProviderId,
-      'provider',
-      'ご登録の希望条件を拝見しました。ご希望の曜日・介助内容にて対応可能ですので、ぜひ一度ご相談ください。'
-    );
+  const handleMarkUpdatedToday = () => {
+    markProviderUpdatedToday(activeProviderId);
     setSentNotice(
-      `「${anonymousCode}」へチャット開始申請を送信しました！上部の「利用者画面」に切り替えると承認テストができます。`
+      '事業所情報・受入条件カードの「最終更新日」を本日に更新しました。利用者検索でも最新順で表示されます。'
     );
     setTimeout(() => setSentNotice(''), 5000);
   };
 
+  const handleQuickChatRequest = (userId: string, anonymousCode: string) => {
+    const existingReq = chatRequests.find(
+      (r) => r.userId === userId && r.providerId === activeProviderId
+    );
+    const access = verifyProviderChatAccess({
+      subscription: currentProviderSubscription,
+      plans: subscriptionPlans,
+      chatRequest: existingReq,
+      allProviderChatRequests: chatRequests,
+      currentYearMonth: getCurrentYearMonth(),
+    });
+    if (!access.canRequestChat && !access.canSendMessage) {
+      setShowChatUpgradeModal(true);
+      return;
+    }
+    const res = sendChatRequest(
+      userId,
+      activeProviderId,
+      'provider',
+      'ご登録の希望条件と当事業所の受入条件カードが一致しております。ぜひ一度ご相談ください。'
+    );
+    if (!res.ok) {
+      setShowChatUpgradeModal(true);
+      return;
+    }
+    setSentNotice(
+      `「${anonymousCode}」へチャット開始申請を送信しました。上部の「利用者画面」に切り替えると承認テストができます。`
+    );
+    setTimeout(() => setSentNotice(''), 5000);
+  };
+
+  const handleAddStaff = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStaffName.trim()) return;
+    addProviderStaffMember(activeProviderId, {
+      name: newStaffName.trim(),
+      roleTitle: newStaffRole.trim() || '担当ヘルパー',
+      qualifications: '介護職員初任者研修等',
+      active: true,
+    });
+    setNewStaffName('');
+  };
+
+  const handleAddBranch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBranchName.trim()) return;
+    addProviderBranch(activeProviderId, {
+      name: newBranchName.trim(),
+      designatedNumber: newBranchNumber.trim() || '1311509999',
+      city: newBranchCity.trim() || '杉並区',
+      addressNote: `${newBranchCity}サテライト`,
+      serviceTypes: profile.serviceTypes,
+      isMain: false,
+    });
+    setNewBranchName('');
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
-      {/* 1. 事業所ホーム：基本情報・プラン切替 ＆ マッチング進捗・曜日別グラフ */}
+      {/* 1. 事業所マイページ・更新鮮度＆進捗ボード */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3.5 border-b border-slate-100 pb-4">
-          <div className="min-w-0">
+        <div className="flex flex-col gap-3.5 border-b border-slate-100 pb-4">
+          <div className="min-w-0 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-900 text-white text-xs font-bold">
-                <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>事業所ホーム</span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-900 text-white text-xs font-bold whitespace-nowrap">
+                <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>事業所マイページ</span>
               </span>
+              {hasDesignatedNumber && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-950 text-xs font-bold tabular-nums whitespace-nowrap">
+                  <BadgeCheck className="w-3.5 h-3.5 text-teal-700 shrink-0" aria-hidden="true" />
+                  <span>事業所番号登録済み（{profile.designatedNumber}）</span>
+                </span>
+              )}
               <span
-                className={`text-xs font-bold px-2.5 py-0.5 rounded-md border tabular-nums ${
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-md border tabular-nums whitespace-nowrap ${
                   isCurrentProviderPaid
                     ? 'bg-indigo-50 text-indigo-900 border-indigo-200'
                     : 'bg-slate-100 text-slate-800 border-slate-200'
@@ -225,29 +354,56 @@ export const ProviderDashboard: React.FC = () => {
                 {currentProviderPlanDef.monthlyPriceYen.toLocaleString()}円）
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-1.5">
+
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
               {profile.name}
             </h1>
-            <p className="text-xs text-slate-600 flex items-center gap-1 mt-0.5">
-              <MapPin className="w-3.5 h-3.5 text-indigo-700" />
-              {profile.coverageAreas.join('・')} · 提供：
-              {profile.serviceTypes.join(' / ')}
+            <p className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-indigo-700" />
+                {profile.coverageAreas.join('・')}
+              </span>
+              <span>·</span>
+              <span>提供：{profile.serviceTypes.join(' / ')}</span>
             </p>
+            <div className="flex flex-wrap items-center gap-2 pt-0.5 text-xs">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-700 font-bold tabular-nums">
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                <span>最終更新日：{formatJapaneseDate(updatedAt)}</span>
+              </span>
+              {staleProvider && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-300 text-amber-950 font-bold tabular-nums">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                  <span>情報が古い可能性があります（{daysElapsed}日経過）</span>
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 目立つ「情報を更新する」ボタン */}
+            <button
+              type="button"
+              data-testid="provider-update-today-btn"
+              onClick={handleMarkUpdatedToday}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>情報を更新する</span>
+            </button>
+
             {providerProfiles.length > 1 && (
               <select
                 aria-label="登録した事業所を切替"
                 value={activeProviderId}
                 onChange={(e) => setActiveProviderId(e.target.value)}
-                className="min-h-[36px] px-2.5 py-1 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-900"
+                className="min-h-[38px] max-w-full sm:max-w-[260px] px-2.5 py-1 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-900 truncate"
               >
                 {providerProfiles.map((p) => {
                   const sub = getProviderSubscription(p.id);
                   return (
                     <option key={p.id} value={p.id}>
-                      [{sub.planId === 'free' ? '無料' : '有料'}] {p.name}
+                      [{sub.planId === 'free' ? '無料' : sub.planId === 'pro' ? '上位' : '有料'}] {p.name}
                     </option>
                   );
                 })}
@@ -256,36 +412,23 @@ export const ProviderDashboard: React.FC = () => {
 
             <button
               type="button"
-              onClick={() =>
-                subscribeProviderToPlan(
-                  activeProviderId,
-                  isCurrentProviderPaid ? 'free' : 'standard'
-                )
-              }
-              className="min-h-[36px] px-2.5 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-950 text-xs font-bold cursor-pointer whitespace-nowrap transition-colors"
-            >
-              {isCurrentProviderPaid ? '無料へ切替' : '有料へ切替'}
-            </button>
-
-            <button
-              type="button"
               onClick={() => {
                 setProviderWizardStep(1);
                 navigateTo('provider-wizard');
               }}
-              className="min-h-[36px] px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+              className="min-h-[38px] px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
             >
               <FileEdit className="w-3.5 h-3.5 text-indigo-700" />
-              <span>条件・空き枠</span>
+              <span>受入条件カード編集</span>
             </button>
 
             <button
               type="button"
               onClick={() => navigateTo('provider-billing')}
-              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-indigo-800 hover:bg-indigo-900 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+              className="min-h-[38px] px-3 py-1.5 rounded-xl bg-indigo-800 hover:bg-indigo-900 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
             >
               <CreditCard className="w-3.5 h-3.5" />
-              <span>料金プラン</span>
+              <span>料金プラン・お支払い</span>
             </button>
 
             <SpeechButton
@@ -309,14 +452,44 @@ export const ProviderDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* 受入状況ワンタップ切替 ＆ 空き曜日（1行） */}
+        {/* プラン方針・月間枠案内バナー */}
+        <div className="p-3.5 rounded-xl bg-indigo-50/60 border border-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="space-y-0.5 text-indigo-950">
+            <p className="font-bold">{CORE_SUBSCRIPTION_MESSAGE}</p>
+            <p className="text-slate-700 tabular-nums">
+              {isCurrentProviderPaid
+                ? `ご契約中：${currentProviderPlanDef.name}（次回更新：${currentProviderSubscription.nextRenewalDate}${
+                    currentProviderSubscription.paymentSummary
+                      ? ` ／ ${currentProviderSubscription.paymentSummary.displayLabel}`
+                      : ''
+                  }）`
+                : `無料プラン利用中：利用者からのチャット受信・返信は無制限 ／ 事業所からの新規申請は月1件まで（今月残り ${
+                    chatQuotaCheck.remainingFreeRequests ?? 0
+                  } 件）`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              subscribeProviderToPlan(
+                activeProviderId,
+                isCurrentProviderPaid ? 'free' : 'standard'
+              )
+            }
+            className="min-h-[34px] px-3 py-1.5 rounded-lg border border-indigo-300 bg-white hover:bg-indigo-50 text-indigo-950 font-bold shrink-0 cursor-pointer"
+          >
+            {isCurrentProviderPaid ? '無料プランで確認' : '有料プラン機能を確認'}
+          </button>
+        </div>
+
+        {/* 受入状況ワンタップ切替 ＆ 対応曜日 */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-50 rounded-xl p-3 border border-slate-200">
           <div className="flex flex-wrap items-center gap-2">
             <label
               htmlFor="quick-acceptance-select"
               className="text-xs font-bold text-slate-700"
             >
-              現在の受入状況:
+              現在の受け入れ状況:
             </label>
             <select
               id="quick-acceptance-select"
@@ -339,14 +512,13 @@ export const ProviderDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-bold text-slate-600">空き曜日:</span>
+            <span className="text-xs font-bold text-slate-600">対応曜日:</span>
             <WeeklyDayStrip activeDays={availableDays} />
           </div>
         </div>
 
-        {/* マッチング進捗バー ＆ 曜日別希望者グラフ */}
         <ProviderMatchingProgressBoard
-          totalUsersCount={candidateMatches.length}
+          totalUsersCount={allEvaluatedMatches.length}
           unapproachedCount={uncontactedCount}
           pendingRequestCount={waitingReplyCount}
           activeCaseCount={Math.max(activeCasesCount, approvedRequestsCount)}
@@ -358,7 +530,7 @@ export const ProviderDashboard: React.FC = () => {
           }
           providerActiveDays={availableDays}
           demandByDay={DAYS_OF_WEEK.reduce((acc, day) => {
-            acc[day] = candidateMatches.filter((c) =>
+            acc[day] = allEvaluatedMatches.filter((c) =>
               c.user.preferences.preferredDays.includes(day)
             ).length;
             return acc;
@@ -366,7 +538,16 @@ export const ProviderDashboard: React.FC = () => {
         />
       </section>
 
-      {/* 2. 新規登録した事業所向け「まず最初にやるべき3ステップ」（進捗バー付き） */}
+      {sentNotice && (
+        <div
+          role="status"
+          className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs sm:text-sm font-bold"
+        >
+          {sentNotice}
+        </div>
+      )}
+
+      {/* 2. まず最初にやるべき3ステップ */}
       <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3 shadow-2xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -375,21 +556,12 @@ export const ProviderDashboard: React.FC = () => {
               3ステップガイド
             </span>
             <h2 className="text-base font-bold text-slate-900">
-              まず最初にやるべき3ステップ
+              受入条件の発信・確認ステップ
             </h2>
           </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-900 tabular-nums">
-              {completedStepsCount}/3 完了
-            </span>
-            <div className="w-24 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
-              <div
-                className="bg-indigo-700 h-full transition-all"
-                style={{ width: `${(completedStepsCount / 3) * 100}%` }}
-              />
-            </div>
-          </div>
+          <span className="text-xs font-bold text-indigo-900 tabular-nums">
+            {completedStepsCount}/3 完了
+          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -398,7 +570,7 @@ export const ProviderDashboard: React.FC = () => {
               <StepProfileIcon className="w-9 h-9 shrink-0" />
               <div className="min-w-0">
                 <span className="text-xs font-bold text-slate-900 block truncate">
-                  1. プロフィール充実
+                  1. 受入条件カード作成
                 </span>
                 <button
                   type="button"
@@ -430,7 +602,7 @@ export const ProviderDashboard: React.FC = () => {
               <StepScheduleIcon className="w-9 h-9 shrink-0" />
               <div className="min-w-0">
                 <span className="text-xs font-bold text-slate-900 block truncate">
-                  2. 受入状況の登録
+                  2. 曜日・時間帯の設定
                 </span>
                 <button
                   type="button"
@@ -440,7 +612,7 @@ export const ProviderDashboard: React.FC = () => {
                   }}
                   className="text-[11px] font-bold text-indigo-800 underline cursor-pointer"
                 >
-                  空き曜日設定 →
+                  曜日設定 →
                 </button>
               </div>
             </div>
@@ -462,14 +634,14 @@ export const ProviderDashboard: React.FC = () => {
               <StepMatchingIcon className="w-9 h-9 shrink-0" />
               <div className="min-w-0">
                 <span className="text-xs font-bold text-slate-900 block truncate">
-                  3. マッチング確認
+                  3. 利用希望者との照合
                 </span>
                 <button
                   type="button"
                   onClick={() => navigateTo('provider-search')}
                   className="text-[11px] font-bold text-indigo-800 underline cursor-pointer"
                 >
-                  候補者一覧へ →
+                  一覧へ →
                 </button>
               </div>
             </div>
@@ -488,55 +660,83 @@ export const ProviderDashboard: React.FC = () => {
         </div>
       </section>
 
-      {sentNotice && (
-        <div
-          role="status"
-          className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs sm:text-sm font-bold"
-        >
-          {sentNotice}
-        </div>
-      )}
-
-      {/* 3. マッチング候補（利用希望者）一覧 ＆ 案件進捗バー（0名なら利用者登録ボタンを表示） */}
+      {/* 3. 利用希望者とのマッチング候補一覧 */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 tabular-nums">
-              登録されている利用希望者一覧（匿名表示・{candidateMatches.length}名）
+              受入条件に合う利用希望者（匿名表示・{candidateMatches.length}名）
             </h2>
             <p className="text-xs text-slate-600">
-              相性％と4段階進捗バー（25%〜100%）を確認し、チャット申請を送ることができます。
+              相性％（適合度100点満点）と4段階の進捗を確認し、相談を開始できます。
             </p>
           </div>
-          {candidateMatches.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {isCurrentProviderPaid && (
+              <button
+                type="button"
+                data-testid="toggle-match-filter-btn"
+                onClick={() => toggleProviderMatchFilter(activeProviderId)}
+                className={`min-h-[36px] px-3 py-1.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer ${
+                  profile.filterOnlyMatchingRequests
+                    ? 'bg-indigo-800 border-indigo-800 text-white'
+                    : 'bg-slate-50 border-slate-300 text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>
+                  {profile.filterOnlyMatchingRequests
+                    ? '条件一致のみ表示中'
+                    : '受入条件に合う希望のみ絞る'}
+                </span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => openRegistrationScreen('user')}
               className="min-h-[36px] px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-950 text-xs font-bold inline-flex items-center gap-1 cursor-pointer shrink-0 whitespace-nowrap"
             >
               <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>別の利用者を新規登録して追加テスト</span>
+              <span>テスト利用者を登録</span>
             </button>
-          )}
+          </div>
         </div>
+
+        {/* 有料プラン新着アラート */}
+        {isCurrentProviderPaid && newArrivalAlerts.length > 0 && (
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-950">
+            <span className="font-bold">
+              新着アラート：受入条件と適合度70%以上の新着希望者が {newArrivalAlerts.length}名 います（{newArrivalAlerts.map((n) => `${n.user.profile.anonymousCode}:${n.result.breakdown.totalScore}%`).join('、')}）
+            </span>
+          </div>
+        )}
 
         {candidateMatches.length === 0 ? (
           <div className="p-6 rounded-2xl bg-teal-50/40 border border-dashed border-teal-300 text-center space-y-3">
             <p className="text-base font-bold text-slate-900">
-              まだ利用希望者が登録されていません（現在 0名）
+              {allEvaluatedMatches.length === 0
+                ? 'まだ利用希望者が登録されていません（現在 0名）'
+                : '「受入条件に合う希望だけ」に一致する利用者が現在ありません'}
             </p>
-            <p className="text-xs text-slate-600">
-              マッチングやチャット申請をテストするには、続けて「利用者」を1名新規登録してみてください。
-            </p>
-            <button
-              type="button"
-              onClick={() => openRegistrationScreen('user')}
-              className="min-h-[46px] px-5 py-2.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 cursor-pointer shadow-xs"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>テスト用の利用者を新規登録する</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            {allEvaluatedMatches.length === 0 ? (
+              <button
+                type="button"
+                onClick={() => openRegistrationScreen('user')}
+                className="min-h-[46px] px-5 py-2.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>テスト用の利用者を新規登録する</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => toggleProviderMatchFilter(activeProviderId)}
+                className="min-h-[40px] px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-800 text-xs font-bold cursor-pointer"
+              >
+                すべての利用希望者を表示する
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -556,6 +756,12 @@ export const ProviderDashboard: React.FC = () => {
                   : caseStatus === '検討中'
                   ? 'considering'
                   : 'unapproached';
+
+              const disc = disclosures.find(
+                (d) =>
+                  d.userId === user.profile.id &&
+                  d.providerId === activeProviderId
+              );
 
               return (
                 <div
@@ -579,7 +785,7 @@ export const ProviderDashboard: React.FC = () => {
                             }
                             customLabel={
                               chatReq?.status === 'approved'
-                                ? '完了（チャット開通）'
+                                ? 'チャット開通'
                                 : chatReq?.status === 'pending'
                                 ? '承認待ち'
                                 : '新着'
@@ -591,7 +797,7 @@ export const ProviderDashboard: React.FC = () => {
                           {user.profile.anonymousCode}（{user.profile.city}）
                         </h3>
                         <span className="text-xs text-slate-500">
-                          希望曜日：{user.preferences.preferredDays.join('・')}曜
+                          第{disc?.stage || 1}段階 ／ 希望：{user.preferences.preferredDays.join('・')}曜
                         </span>
                       </div>
                       <MatchScoreRing
@@ -601,7 +807,6 @@ export const ProviderDashboard: React.FC = () => {
                       />
                     </div>
 
-                    {/* 4段階案件進捗バー（25% / 50% / 75% / 100%） */}
                     <CandidateCaseProgressBar stage={stage} />
 
                     <MatchBreakdownBarGraph
@@ -609,7 +814,7 @@ export const ProviderDashboard: React.FC = () => {
                       compact={true}
                     />
 
-                    {/* 案件ステータス切替ボタン */}
+                    {/* 有料プラン：候補者の進捗管理ボタン */}
                     <div className="grid grid-cols-4 gap-1 pt-1">
                       {CASE_STATUS_OPTIONS.map((st) => {
                         const active = caseStatus === st;
@@ -656,12 +861,7 @@ export const ProviderDashboard: React.FC = () => {
                           preferredDays: user.preferences.preferredDays,
                           score: result.breakdown.totalScore,
                           judgment: result.judgment,
-                          disclosureStage:
-                            disclosures.find(
-                              (d) =>
-                                d.userId === user.profile.id &&
-                                d.providerId === activeProviderId
-                            )?.stage || 1,
+                          disclosureStage: disc?.stage || 1,
                         })
                       }
                     />
@@ -711,6 +911,202 @@ export const ProviderDashboard: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+        )}
+      </section>
+
+      {/* 4. 有料プラン：複数スタッフ管理 */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-indigo-700" aria-hidden="true" />
+            <h2 className="text-base font-bold text-slate-900">
+              複数スタッフ管理（{profile.staffMembers?.length || 0}名登録中）
+            </h2>
+          </div>
+          {!isCurrentProviderPaid && (
+            <button
+              type="button"
+              onClick={() => navigateTo('provider-billing')}
+              className="text-xs font-bold text-indigo-800 underline cursor-pointer"
+            >
+              有料プラン（3,980円/月）で複数スタッフを追加 →
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {(profile.staffMembers || []).map((st) => (
+            <div
+              key={st.id}
+              className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2 text-xs"
+            >
+              <div>
+                <p className="font-bold text-slate-900">{st.name}</p>
+                <p className="text-slate-600">
+                  {st.roleTitle} ／ {st.qualifications}
+                </p>
+              </div>
+              {isCurrentProviderPaid && (profile.staffMembers || []).length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeProviderStaffMember(activeProviderId, st.id)}
+                  aria-label={`${st.name}を削除`}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {isCurrentProviderPaid && (
+          <form onSubmit={handleAddStaff} className="flex flex-wrap gap-2 pt-1">
+            <input
+              type="text"
+              value={newStaffName}
+              onChange={(e) => setNewStaffName(e.target.value)}
+              placeholder="スタッフ氏名（例：佐藤 花子）"
+              className="flex-1 min-w-[160px] min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs"
+            />
+            <input
+              type="text"
+              value={newStaffRole}
+              onChange={(e) => setNewStaffRole(e.target.value)}
+              placeholder="役割（例：サービス提供責任者）"
+              className="min-w-[140px] min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs"
+            />
+            <button
+              type="submit"
+              className="min-h-[38px] px-4 py-1.5 rounded-lg bg-indigo-800 hover:bg-indigo-900 text-white text-xs font-bold cursor-pointer"
+            >
+              ＋ スタッフ追加
+            </button>
+          </form>
+        )}
+      </section>
+
+      {/* 5. 上位プラン（月額9,800円）：複数拠点管理 ＆ 地域の希望条件の傾向分析 */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-5 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-indigo-700" aria-hidden="true" />
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                上位プラン機能：複数拠点管理・地域の希望条件の傾向分析
+              </h2>
+              <p className="text-xs text-slate-600">
+                上位プラン（月額9,800円・税込）で複数事業所の拠点切り替えと地域需要の分析が利用できます。
+              </p>
+            </div>
+          </div>
+          {!isProPlan && (
+            <button
+              type="button"
+              onClick={() => navigateTo('provider-billing')}
+              className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-indigo-800 hover:bg-indigo-900 text-white text-xs font-bold cursor-pointer"
+            >
+              上位プランを見る（月額9,800円）
+            </button>
+          )}
+        </div>
+
+        {/* 複数拠点管理 */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-slate-900">
+            複数拠点の管理（{profile.branches?.length || 1}拠点）
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {(profile.branches || []).map((br) => (
+              <div
+                key={br.id}
+                className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2 text-xs"
+              >
+                <div>
+                  <p className="font-bold text-slate-900">
+                    {br.name} {br.isMain ? '（主拠点）' : ''}
+                  </p>
+                  <p className="text-slate-600 tabular-nums">
+                    指定番号：{br.designatedNumber} ／ {br.city}
+                  </p>
+                </div>
+                {isProPlan && !br.isMain && (
+                  <button
+                    type="button"
+                    onClick={() => removeProviderBranch(activeProviderId, br.id)}
+                    aria-label={`${br.name}を削除`}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-700 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {isProPlan && (
+            <form onSubmit={handleAddBranch} className="flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={newBranchName}
+                onChange={(e) => setNewBranchName(e.target.value)}
+                placeholder="新拠点名（例：中野サテライト）"
+                className="flex-1 min-w-[160px] min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs"
+              />
+              <input
+                type="text"
+                value={newBranchNumber}
+                onChange={(e) => setNewBranchNumber(e.target.value)}
+                placeholder="指定番号10桁"
+                className="w-[120px] min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-mono"
+              />
+              <input
+                type="text"
+                value={newBranchCity}
+                onChange={(e) => setNewBranchCity(e.target.value)}
+                placeholder="地域（例：中野区）"
+                className="w-[100px] min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs"
+              />
+              <button
+                type="submit"
+                className="min-h-[38px] px-4 py-1.5 rounded-lg bg-indigo-800 hover:bg-indigo-900 text-white text-xs font-bold cursor-pointer"
+              >
+                ＋ 拠点を追加
+              </button>
+            </form>
+          )}
+        </div>
+
+        {/* 地域の希望条件の傾向分析 */}
+        {isProPlan ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100 text-xs">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+              <p className="font-bold text-slate-900">エリア別の希望件数</p>
+              {regionalAnalytics.demandByArea.slice(0, 5).map((item) => (
+                <div key={item.area} className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-700">{item.area}</span>
+                  <span className="font-bold text-indigo-900 tabular-nums">
+                    {item.count}名
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+              <p className="font-bold text-slate-900">ニーズの多いサービス・介助内容</p>
+              {regionalAnalytics.demandByService.map((s) => (
+                <div key={s.service} className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-700">{s.service}</span>
+                  <span className="font-bold text-teal-900 tabular-nums">
+                    {s.count}件
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+            ※上位プランへアップグレードすると、地域別の利用希望傾向（サービス・エリア・曜日の需要分析）を確認して受け入れ体制の計画に役立てられます。
           </div>
         )}
       </section>

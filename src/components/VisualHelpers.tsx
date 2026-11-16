@@ -646,25 +646,25 @@ export const CareNeedsIconGrid: React.FC<{
 export const PrivacyThreeStageVisual: React.FC = () => {
   const stages = [
     {
-      num: 'STEP 1',
-      title: '最初は匿名',
-      sub: '氏名・住所・電話番号は一切出ません',
+      num: '第1段階「匿名相談」',
+      title: 'ニックネーム・希望概要のみ',
+      sub: '氏名・連絡先・障害の詳細は非表示のまま相談可能',
       icon: Lock,
       bg: 'bg-slate-50 border-slate-200 text-slate-800',
       iconBg: 'bg-slate-200 text-slate-700',
     },
     {
-      num: 'STEP 2',
-      title: 'チャット相談',
-      sub: '匿名のまま日程や介助内容を質問',
+      num: '第2段階「条件の開示」',
+      title: '利用者の同意後に条件開示',
+      sub: '同意した事業所のみ障害種別・介助内容・希望曜日を開示',
       icon: MessageCircle,
       bg: 'bg-sky-50/60 border-sky-200 text-sky-950',
       iconBg: 'bg-sky-100 text-sky-800',
     },
     {
-      num: 'STEP 3',
-      title: '同意後のみ開示',
-      sub: 'あなたが許可した事業所だけ連絡先を開示',
+      num: '第3段階「連絡先の開示」',
+      title: '面談・見学決定＆同意後のみ',
+      sub: '日程確定後に同意した事業所へ氏名・電話・メールを開示',
       icon: Unlock,
       bg: 'bg-teal-50/70 border-teal-200 text-teal-950',
       iconBg: 'bg-teal-700 text-white',
@@ -884,9 +884,9 @@ export const FreePlanChatUpgradeModal: React.FC<{
     >
       <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 sm:p-7 space-y-5 shadow-xl">
         <div className="flex items-center justify-between gap-4">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-100 text-amber-900 text-xs font-bold">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-100 text-amber-900 text-xs font-bold">
             <Lock className="w-3.5 h-3.5" aria-hidden="true" />
-            有料プラン限定機能
+            今月の無料申請枠（月1件）の上限到達
           </span>
           <SubscriptionPlanIllustration className="w-16 h-14" />
         </div>
@@ -896,29 +896,29 @@ export const FreePlanChatUpgradeModal: React.FC<{
             id="chat-upgrade-modal-title"
             className="text-xl font-bold text-slate-900 leading-snug"
           >
-            事業所からのチャット開始申請は有料プランでご利用いただけます。
+            今月の無料プラン申請上限（月1件まで）に達しました
           </h2>
           <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
-            利用者・ご家族から届いた問い合わせには無料プランのまま返信できます。事業所側から積極的にチャット申請を送る機能や案件管理DXは有料DXサブスクでご利用いただけます（契約成立時の斡旋手数料は0円）。
+            まずは無料で掲載できます。利用者からのチャット受信・返信は0円のまま制限なくご利用いただけます。有料プランは、受入条件を発信して、条件の合う希望を受け取り、進捗を管理するための業務道具です。
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs sm:text-sm text-slate-700">
           <p className="font-bold text-teal-900">
-            有料プラン（月額 {monthlyPriceYen.toLocaleString()}円・カード／口座振替対応）でできること：
+            有料プラン（月額 {monthlyPriceYen.toLocaleString()}円税込・口座振替／カード対応）でできること：
           </p>
           <ul className="space-y-1.5">
             <li className="flex items-center gap-2">
               <Check className="w-4 h-4 text-teal-700 shrink-0" />
-              <span>事業所側から利用希望者へのチャット開始申請（積極アプローチ）</span>
+              <span>事業所からのチャット申請が無制限・相性の高い利用者の新着通知</span>
             </li>
             <li className="flex items-center gap-2">
               <Check className="w-4 h-4 text-teal-700 shrink-0" />
-              <span>新着利用希望者のリアルタイム通知・履歴管理</span>
+              <span>受入条件に合う希望だけが届く設定・候補者の進捗管理</span>
             </li>
             <li className="flex items-center gap-2">
               <Check className="w-4 h-4 text-teal-700 shrink-0" />
-              <span>対応中・検討中・対応不可などの案件ステータスDX管理</span>
+              <span>複数スタッフ管理・受入条件カードの強調表示（※適合度％不変）</span>
             </li>
           </ul>
         </div>
@@ -929,7 +929,7 @@ export const FreePlanChatUpgradeModal: React.FC<{
             onClick={onViewPlanDetails}
             className="w-full min-h-[52px] px-5 py-3 rounded-2xl bg-teal-800 hover:bg-teal-900 text-white font-bold text-base flex items-center justify-center gap-2 cursor-pointer shadow-xs"
           >
-            <span>有料プランの詳細を見る</span>
+            <span>料金プラン・お申し込みを見る</span>
           </button>
           <button
             type="button"
@@ -951,10 +951,10 @@ export const FreePlanChatUpgradeModal: React.FC<{
 export interface ScoreBreakdownInput {
   serviceScore: number; // max 25
   careNeedsScore: number; // max 25
-  scheduleScore: number; // max 20
+  disabilityExpScore: number; // max 20 (障害特性・支援細目)
+  scheduleScore: number; // max 15
   areaScore: number; // max 10
-  disabilityExpScore: number; // max 10
-  genderScore: number; // max 10
+  genderScore: number; // max 5
   totalScore: number; // max 100
 }
 
@@ -997,24 +997,40 @@ export const MatchBreakdownBarGraph: React.FC<{
 }> = ({ breakdown, compact = false }) => {
   const axes = [
     {
-      label: 'サービス種別',
+      label: 'サービス',
+      score: breakdown.serviceScore,
+      max: 25,
       ratio: breakdown.serviceScore / 25,
     },
     {
-      label: '介助・身体対応',
+      label: '介助内容',
+      score: breakdown.careNeedsScore,
+      max: 25,
       ratio: breakdown.careNeedsScore / 25,
     },
     {
-      label: '曜日・時間帯',
-      ratio: breakdown.scheduleScore / 20,
+      label: '障害特性・細目',
+      score: breakdown.disabilityExpScore,
+      max: 20,
+      ratio: breakdown.disabilityExpScore / 20,
     },
     {
-      label: '地域・特性経験',
-      ratio: (breakdown.areaScore + breakdown.disabilityExpScore) / 20,
+      label: '曜日・時間帯',
+      score: breakdown.scheduleScore,
+      max: 15,
+      ratio: breakdown.scheduleScore / 15,
+    },
+    {
+      label: 'エリア',
+      score: breakdown.areaScore,
+      max: 10,
+      ratio: breakdown.areaScore / 10,
     },
     {
       label: 'ヘルパー性別',
-      ratio: breakdown.genderScore / 10,
+      score: breakdown.genderScore,
+      max: 5,
+      ratio: breakdown.genderScore / 5,
     },
   ];
 
@@ -1032,15 +1048,15 @@ export const MatchBreakdownBarGraph: React.FC<{
       <div
         className="rounded-xl bg-slate-50 border border-slate-200/90 p-3 space-y-2"
         role="group"
-        aria-label="5項目別相性グラフ"
+        aria-label="6項目別適合度グラフ（100点満点内訳）"
       >
         <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
-          <span>項目別の適合バランス</span>
+          <span>適合度の内訳（100点満点）</span>
           <span className="font-mono text-slate-600" aria-hidden="true">
             ◎=十分 ○=相談可 △=一部 ×=不可
           </span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
           {axes.map((axis) => {
             const pct = Math.max(0, Math.min(100, Math.round(axis.ratio * 100)));
             const { mark, barColor, badgeClass } = getSymbolAndStyle(axis.ratio);
@@ -1060,9 +1076,9 @@ export const MatchBreakdownBarGraph: React.FC<{
                     <span className="font-bold text-slate-700 truncate">
                       {axis.label}
                     </span>
-                    <span className="font-mono font-bold text-slate-600 tabular-nums shrink-0">
+                    <span className="font-mono font-bold text-slate-700 tabular-nums shrink-0">
                       <span className="sr-only">{ratingMeaning(mark)}、</span>
-                      {pct}%
+                      {axis.score}/{axis.max}点
                     </span>
                   </div>
                   <div
@@ -1087,15 +1103,15 @@ export const MatchBreakdownBarGraph: React.FC<{
     <div
       className="rounded-xl bg-slate-50 border border-slate-200/90 p-3.5 space-y-2"
       role="group"
-      aria-label="5項目別相性グラフ"
+      aria-label="6項目別適合度グラフ（100点満点内訳）"
     >
       <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 pb-0.5">
-        <span>項目別の適合バランス</span>
+        <span>受入条件との適合度内訳（計100点）</span>
         <span className="font-mono text-slate-600" aria-hidden="true">
           ◎=十分 / ○=相談可 / △=一部 / ×=不可
         </span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {axes.map((axis) => {
           const pct = Math.max(0, Math.min(100, Math.round(axis.ratio * 100)));
           const { mark, barColor, badgeClass } = getSymbolAndStyle(axis.ratio);
@@ -1125,9 +1141,9 @@ export const MatchBreakdownBarGraph: React.FC<{
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="block text-right text-[10px] font-mono font-bold text-slate-500 tabular-nums">
+                <span className="block text-right text-[11px] font-mono font-bold text-slate-700 tabular-nums">
                   <span className="sr-only">{ratingMeaning(mark)}、</span>
-                  {pct}%
+                  {axis.score}/{axis.max}点
                 </span>
               </div>
             </div>

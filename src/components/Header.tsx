@@ -14,6 +14,7 @@ import {
   Bookmark,
   LogIn,
   LogOut,
+  UserCheck,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import { countUserFavorites } from '../utils/favorites';
@@ -39,6 +40,7 @@ export const Header: React.FC = () => {
     providerProfiles,
     currentUserBundle,
     currentProviderBundle,
+    currentCoordinator,
     isCurrentProviderPaid,
     chatRequests,
     session,
@@ -81,6 +83,7 @@ export const Header: React.FC = () => {
     currentView === 'registration-complete';
   const isUserMode = !isOnTopOrRegister && role === 'user';
   const isProviderMode = !isOnTopOrRegister && role === 'provider';
+  const isCoordinatorMode = !isOnTopOrRegister && role === 'coordinator';
   const isAdminMode = !isOnTopOrRegister && role === 'admin';
 
   return (
@@ -91,11 +94,11 @@ export const Header: React.FC = () => {
         <button
           type="button"
           onClick={() => navigateTo('top')}
-          className="min-h-[42px] flex items-center gap-2 text-left cursor-pointer shrink-0"
+          className="min-h-[42px] flex items-center gap-1.5 sm:gap-2 text-left cursor-pointer shrink-0"
         >
           <BrandLogoMark />
           <div className="flex flex-col leading-tight">
-            <span className="text-base sm:text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
+            <span className="text-sm sm:text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
               ケアピタ
             </span>
             <span className="hidden sm:block text-[10px] font-medium text-slate-500 whitespace-nowrap">
@@ -105,7 +108,7 @@ export const Header: React.FC = () => {
         </button>
 
         {/* 右：操作バー */}
-        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
           <div
             role="group"
             aria-label="画面切替"
@@ -116,7 +119,7 @@ export const Header: React.FC = () => {
               data-testid="role-switch-user"
               aria-pressed={isUserMode}
               onClick={() => startAsUserDemo(activeUserId, 'user-dashboard')}
-              className={`min-h-[34px] px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
+              className={`min-h-[34px] px-1.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-bold flex items-center gap-1 sm:gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
                 isUserMode
                   ? 'bg-teal-800 text-white shadow-xs'
                   : 'text-slate-700 hover:bg-white'
@@ -138,7 +141,7 @@ export const Header: React.FC = () => {
               onClick={() =>
                 startAsProviderDemo(activeProviderId, 'provider-dashboard')
               }
-              className={`min-h-[34px] px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
+              className={`min-h-[34px] px-1.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-bold flex items-center gap-1 sm:gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
                 isProviderMode
                   ? 'bg-indigo-800 text-white shadow-xs'
                   : 'text-slate-700 hover:bg-white'
@@ -180,7 +183,7 @@ export const Header: React.FC = () => {
                 role === 'provider' ? 'provider' : 'user'
               )
             }
-            className={`min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap transition-colors ${
+            className={`min-h-[36px] px-2 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0 whitespace-nowrap transition-colors ${
               currentView === 'register'
                 ? 'bg-amber-400 text-slate-950'
                 : 'bg-teal-800 hover:bg-teal-900 text-white'
@@ -345,7 +348,7 @@ export const Header: React.FC = () => {
                   <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>事業所モード</span>
                 </span>
-                <span className="text-xs sm:text-sm font-semibold text-white truncate max-w-[160px] lg:max-w-[200px]">
+                <span className="text-xs sm:text-sm font-semibold text-white truncate max-w-[135px] lg:max-w-[175px]">
                   {currentProviderBundle.profile.name}
                 </span>
                 {session.mfaVerified && (
@@ -395,7 +398,7 @@ export const Header: React.FC = () => {
                 },
                 {
                   id: 'provider-wizard',
-                  label: '条件・空き枠',
+                  label: '受入条件',
                   icon: SlidersHorizontal,
                 },
                 {
@@ -421,7 +424,7 @@ export const Header: React.FC = () => {
                     type="button"
                     aria-current={active ? 'page' : undefined}
                     onClick={() => navigateTo(tab.id as any)}
-                    className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
+                    className={`min-h-[32px] px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
                       active
                         ? 'bg-white text-indigo-950 shadow-xs'
                         : 'text-indigo-100 hover:bg-indigo-800'
@@ -444,6 +447,31 @@ export const Header: React.FC = () => {
                 );
               })}
             </nav>
+          </div>
+        </div>
+      )}
+
+      {isCoordinatorMode && (
+        <div className="bg-sky-900 text-white border-t border-sky-800">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-sky-300 text-sky-950 text-xs font-bold whitespace-nowrap shrink-0">
+                <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>相談支援専門員モード（無料）</span>
+              </span>
+              {currentCoordinator && (
+                <span className="text-xs sm:text-sm font-semibold text-white truncate">
+                  {currentCoordinator.officeName} ／ {currentCoordinator.name}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => navigateTo('top')}
+              className="text-xs font-semibold text-sky-100 hover:text-white underline cursor-pointer whitespace-nowrap shrink-0"
+            >
+              トップへ戻る
+            </button>
           </div>
         </div>
       )}

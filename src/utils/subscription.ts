@@ -1,73 +1,100 @@
 import {
+  CareNeedItem,
   ChatRequest,
+  DayOfWeek,
+  DAYS_OF_WEEK,
   MatchingInteraction,
+  ProviderAvailability,
+  ProviderCapabilities,
   ProviderProfile,
   ProviderSubscription,
   ServiceType,
   SubscriptionPlanDefinition,
+  UserPreferences,
   UserProfile,
+  UserSupportNeeds,
 } from '../types/domain';
+import { getCurrentYearMonth } from './date';
+
+export const CORE_SUBSCRIPTION_MESSAGE =
+  'まずは無料で掲載できます。有料プランは、受入条件を発信して、条件の合う希望を受け取り、進捗を管理するための道具です。';
 
 export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlanDefinition[] = [
   {
     id: 'free',
     name: '無料プラン',
     monthlyPriceYen: 0,
-    badgeText: '初期登録・受信返信OK',
+    annualPriceYen: 0,
+    badgeText: 'まずは無料掲載',
     description:
-      '事業所登録・検索掲載・適合度確認に加え、利用者・ご家族から届いたチャット相談への返信も無料で行えます。',
+      'まずは無料で掲載できます。受入条件カードを掲載し、利用者からのチャット受信・返信まで0円で行えます。',
     features: [
-      '事業所アカウント登録・検索掲載（0円）',
-      '対応サービス・対応地域・空き曜日の登録',
-      '匿名化された利用希望者ニーズと適合度（％）の閲覧',
-      '利用者・ご家族から届いたチャットへの返信対応',
+      '事業所登録・検索掲載（指定事業所番号の登録済みマーク表示）',
+      '受入条件カードの掲載・更新',
+      '利用者からのチャット受信・返信（制限なし）',
+      '事業所からのチャット申請は月1件まで',
     ],
-    canSendChatRequest: false,
+    monthlyOutboundRequestLimit: 1,
+    canSendChatRequest: true,
     canManageCases: false,
     canReceiveNewAlerts: false,
+    canManageStaff: false,
+    canHighlightCard: false,
+    canManageMultiBranches: false,
+    canViewRegionalAnalytics: false,
     isAvailableNow: true,
   },
   {
     id: 'standard',
-    name: '有料プラン（スタンダード）',
+    name: '有料プラン',
     monthlyPriceYen: 3980,
-    badgeText: '定額DXサブスク',
+    annualPriceYen: 43800,
+    badgeText: '業務効率化・おすすめ',
     description:
-      '契約成立ごとの紹介手数料は一切なし。事業所側からの積極的なチャット開始申請や新着通知、案件進捗DXが使える月額定額プランです。',
+      'まずは無料で掲載できます。有料プランは、受入条件を発信して、条件の合う希望を受け取り、進捗を管理するための道具です。',
     features: [
-      '無料プランの全機能（登録・掲載・受信チャット返信）',
-      '事業所側から利用希望者へのチャット開始申請（積極アプローチ）',
-      '新着利用希望者の通知・問い合わせ状況の一元管理',
-      '対応中・検討中・対応不可の案件進捗DX管理',
-      '契約成立時の成果報酬・斡旋手数料は一切0円（定額利用料のみ）',
+      '事業所からのチャット申請が無制限',
+      '相性の高い利用者の新着通知',
+      '受入条件に合う希望だけが届く設定',
+      '候補者の進捗管理・複数スタッフ管理',
+      '受入条件カードの強調表示（※相性％は変わりません）',
     ],
+    monthlyOutboundRequestLimit: null,
     canSendChatRequest: true,
     canManageCases: true,
     canReceiveNewAlerts: true,
+    canManageStaff: true,
+    canHighlightCard: true,
+    canManageMultiBranches: false,
+    canViewRegionalAnalytics: false,
     isAvailableNow: true,
   },
   {
     id: 'pro',
-    name: '上位プラン（プレミアム・将来拡張枠）',
-    monthlyPriceYen: 4980,
-    badgeText: '将来拡張予定',
+    name: '上位プラン',
+    monthlyPriceYen: 9800,
+    annualPriceYen: 108000,
+    badgeText: '複数拠点・地域分析',
     description:
-      '複数サ責アカウント共有や優先通知、月次レポート機能などを備えた上位プラン（将来の拡張用定義）。',
+      '複数拠点を展開する法人様向けに、拠点横断の管理と地域の希望条件の傾向が見える分析画面を備えた上位プランです。',
     features: [
-      '有料プラン（スタンダード）のすべての機能',
-      '複数担当者（サービス提供責任者）での案件共有',
-      '地域内の新着ニーズ優先通知・月次マッチング分析',
+      '有料プランのすべての業務機能（申請無制限・進捗／スタッフ管理）',
+      '複数拠点の一元管理・切り替え',
+      '地域の希望条件の傾向が見られる分析画面',
+      '年払い選択時は請求書払い（銀行振込）に対応',
     ],
+    monthlyOutboundRequestLimit: null,
     canSendChatRequest: true,
     canManageCases: true,
     canReceiveNewAlerts: true,
-    isAvailableNow: false,
+    canManageStaff: true,
+    canHighlightCard: true,
+    canManageMultiBranches: true,
+    canViewRegionalAnalytics: true,
+    isAvailableNow: true,
   },
 ];
 
-/**
- * 事業所の現在のプラン定義を取得する
- */
 export function getProviderPlanDefinition(
   subscription: ProviderSubscription | undefined,
   plans: SubscriptionPlanDefinition[]
@@ -81,7 +108,7 @@ export function getProviderPlanDefinition(
 }
 
 /**
- * 事業所が有料プラン（積極アプローチ・案件管理DX可能）かどうかを判定する（サーバー側権限チェック模倣）
+ * 事業所が有料プラン（スタンダードまたは上位プラン）契約中かどうか
  */
 export function isPaidPlanActive(
   subscription: ProviderSubscription | undefined,
@@ -91,35 +118,85 @@ export function isPaidPlanActive(
   if (subscription.status !== 'active') return false;
   if (subscription.accountApprovalStatus === 'suspended') return false;
   const plan = getProviderPlanDefinition(subscription, plans);
-  return plan.canSendChatRequest;
+  return plan.id === 'standard' || plan.id === 'pro';
+}
+
+export function isProPlanActive(
+  subscription: ProviderSubscription | undefined,
+  plans: SubscriptionPlanDefinition[] = DEFAULT_SUBSCRIPTION_PLANS
+): boolean {
+  if (!isPaidPlanActive(subscription, plans)) return false;
+  return subscription?.planId === 'pro';
+}
+
+/**
+ * 指定月（YYYY-MM）に事業所側が送信した申請件数を数える
+ */
+export function countProviderMonthlyOutboundRequests(
+  chatRequests: ChatRequest[],
+  providerId: string,
+  yearMonth: string = getCurrentYearMonth()
+): number {
+  return chatRequests.filter(
+    (req) =>
+      req.providerId === providerId &&
+      req.initiatedBy === 'provider' &&
+      req.requestedAt.startsWith(yearMonth)
+  ).length;
 }
 
 /**
  * 事業所によるチャット送受信・開始申請の権限検証
- * - 無料プランでも「利用者・ご家族から開始されたチャット（approved / initiatedBy === "user"）」への返信は可能
- * - 「事業所側からのチャット開始申請（スカウト・新規アプローチ）」は有料DXサブスクが必要
+ * - 利用者から開始されたスレッドへの受信・返信はどのプランでも無料・無制限
+ * - 無料プランでも「事業所からの新規申請」を月1件まで送信可能
+ * - 有料・上位プランは月間申請件数が無制限
  */
 export function verifyProviderChatAccess(params: {
   subscription: ProviderSubscription | undefined;
   plans?: SubscriptionPlanDefinition[];
   chatRequest?: ChatRequest;
+  allProviderChatRequests?: ChatRequest[];
+  currentYearMonth?: string;
 }): {
   canRequestChat: boolean;
   canSendMessage: boolean;
+  monthlyOutboundUsed: number;
+  monthlyOutboundLimit: number | null;
+  remainingFreeRequests: number | null;
   reason: string;
 } {
-  const { subscription, plans = DEFAULT_SUBSCRIPTION_PLANS, chatRequest } =
-    params;
+  const {
+    subscription,
+    plans = DEFAULT_SUBSCRIPTION_PLANS,
+    chatRequest,
+    allProviderChatRequests = [],
+    currentYearMonth = getCurrentYearMonth(),
+  } = params;
+
+  const plan = getProviderPlanDefinition(subscription, plans);
+  const monthlyLimit = plan.monthlyOutboundRequestLimit;
+  const monthlyUsed = subscription
+    ? countProviderMonthlyOutboundRequests(
+        allProviderChatRequests,
+        subscription.providerId,
+        currentYearMonth
+      )
+    : 0;
+  const remaining =
+    monthlyLimit === null ? null : Math.max(0, monthlyLimit - monthlyUsed);
 
   if (!subscription || subscription.accountApprovalStatus === 'suspended') {
     return {
       canRequestChat: false,
       canSendMessage: false,
+      monthlyOutboundUsed: monthlyUsed,
+      monthlyOutboundLimit: monthlyLimit,
+      remainingFreeRequests: remaining,
       reason: '事業所アカウントが停止中または未登録のため利用できません。',
     };
   }
 
-  // 利用者側から問い合わせが始まったスレッド（または既に承認済みスレッド）は無料プランでも返信可能
+  // 利用者から届いた相談または承認済みスレッドはプランに関わらず返信可能
   if (
     chatRequest &&
     (chatRequest.initiatedBy === 'user' || chatRequest.status === 'approved')
@@ -127,26 +204,35 @@ export function verifyProviderChatAccess(params: {
     return {
       canRequestChat: false,
       canSendMessage: true,
-      reason:
-        '利用者・ご家族からの相談スレッドです。無料プランでもこのまま返信できます。',
-    };
-  }
-
-  const paid = isPaidPlanActive(subscription, plans);
-  if (!paid) {
-    return {
-      canRequestChat: false,
-      canSendMessage: false,
-      reason:
-        '事業所からのチャット開始申請は有料プラン（月額定額DXサブスク）でご利用いただけます。利用者から届いた相談への返信は無料のまま可能です。',
+      monthlyOutboundUsed: monthlyUsed,
+      monthlyOutboundLimit: monthlyLimit,
+      remainingFreeRequests: remaining,
+      reason: 'チャットが承認・開通しています。このままメッセージを送信できます。',
     };
   }
 
   if (!chatRequest) {
+    if (monthlyLimit !== null && monthlyUsed >= monthlyLimit) {
+      return {
+        canRequestChat: false,
+        canSendMessage: false,
+        monthlyOutboundUsed: monthlyUsed,
+        monthlyOutboundLimit: monthlyLimit,
+        remainingFreeRequests: 0,
+        reason: `無料プランでの事業所からの申請上限（月${monthlyLimit}件まで）に達しています。無制限で申請するには有料プランをご利用ください。`,
+      };
+    }
+
     return {
       canRequestChat: true,
       canSendMessage: false,
-      reason: '利用希望者へチャット開始申請を送信できます（承認後にチャット開始）。',
+      monthlyOutboundUsed: monthlyUsed,
+      monthlyOutboundLimit: monthlyLimit,
+      remainingFreeRequests: remaining,
+      reason:
+        monthlyLimit !== null
+          ? `今月の無料申請枠（残り ${remaining} 件 / 月${monthlyLimit}件）で申請できます。`
+          : '利用希望者へチャット開始申請を送信できます（回数無制限）。',
     };
   }
 
@@ -154,6 +240,9 @@ export function verifyProviderChatAccess(params: {
     return {
       canRequestChat: false,
       canSendMessage: false,
+      monthlyOutboundUsed: monthlyUsed,
+      monthlyOutboundLimit: monthlyLimit,
+      remainingFreeRequests: remaining,
       reason: 'チャット開始申請を送信済みです。利用者・ご家族の承認をお待ちください。',
     };
   }
@@ -162,14 +251,143 @@ export function verifyProviderChatAccess(params: {
     return {
       canRequestChat: false,
       canSendMessage: false,
-      reason: '今回のチャット申請は辞退されました。',
+      monthlyOutboundUsed: monthlyUsed,
+      monthlyOutboundLimit: monthlyLimit,
+      remainingFreeRequests: remaining,
+      reason: '今回のチャット申請は見送りとなりました。',
     };
   }
 
   return {
     canRequestChat: false,
     canSendMessage: true,
-    reason: '利用者・ご家族の承認済みです。チャットでメッセージを交換できます。',
+    monthlyOutboundUsed: monthlyUsed,
+    monthlyOutboundLimit: monthlyLimit,
+    remainingFreeRequests: remaining,
+    reason: '利用者・ご家族の承認済みです。',
+  };
+}
+
+/**
+ * 有料プラン：「受入条件に合う希望だけが届く設定」の判定
+ */
+export function doesUserMatchProviderAcceptanceFilter(params: {
+  providerProfile: ProviderProfile;
+  providerCapabilities: ProviderCapabilities;
+  providerAvailability: ProviderAvailability;
+  userNeeds: UserSupportNeeds;
+  userPreferences: UserPreferences;
+  userProfile: UserProfile;
+}): boolean {
+  const {
+    providerProfile,
+    providerCapabilities,
+    providerAvailability,
+    userNeeds,
+    userPreferences,
+    userProfile,
+  } = params;
+
+  const hasService =
+    userNeeds.desiredServices.length === 0 ||
+    userNeeds.desiredServices.some((s) => providerProfile.serviceTypes.includes(s));
+  if (!hasService) return false;
+
+  const targetAreas =
+    userPreferences.preferredAreas.length > 0
+      ? userPreferences.preferredAreas
+      : [userProfile.city];
+  const hasArea = targetAreas.some(
+    (area) =>
+      providerProfile.coverageAreas.includes(area) ||
+      providerProfile.locationCity === area
+  );
+  if (!hasArea) return false;
+
+  const availableDays = providerAvailability.weeklySchedule
+    .filter((d) => d.available)
+    .map((d) => d.day);
+  const hasDay =
+    userPreferences.preferredDays.length === 0 ||
+    userPreferences.preferredDays.some((d) => availableDays.includes(d));
+  if (!hasDay) return false;
+
+  const essential =
+    userNeeds.essentialCareNeeds.length > 0
+      ? userNeeds.essentialCareNeeds
+      : userNeeds.careNeeds;
+  const coversEssential = essential.every((c) =>
+    providerCapabilities.supportedCareItems.includes(c)
+  );
+  return coversEssential;
+}
+
+/**
+ * 上位プラン向け：地域の希望条件の傾向分析
+ */
+export interface RegionalDemandAnalytics {
+  totalUsers: number;
+  demandByArea: { area: string; count: number }[];
+  demandByService: { service: ServiceType; count: number }[];
+  demandByDay: { day: DayOfWeek; count: number }[];
+  topCareNeeds: { item: CareNeedItem; count: number }[];
+}
+
+export function calculateRegionalDemandAnalytics(params: {
+  userProfiles: UserProfile[];
+  userNeeds: UserSupportNeeds[];
+  userPreferences: UserPreferences[];
+}): RegionalDemandAnalytics {
+  const { userProfiles, userNeeds, userPreferences } = params;
+
+  const areaCounts: Record<string, number> = {};
+  for (const u of userProfiles) {
+    const prefs = userPreferences.find((p) => p.userId === u.id);
+    const areas =
+      prefs && prefs.preferredAreas.length > 0 ? prefs.preferredAreas : [u.city];
+    for (const a of areas) {
+      areaCounts[a] = (areaCounts[a] || 0) + 1;
+    }
+  }
+  const demandByArea = Object.entries(areaCounts)
+    .map(([area, count]) => ({ area, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const services: ServiceType[] = [
+    '移動支援',
+    '居宅介護',
+    '重度訪問介護',
+    '同行援護',
+  ];
+  const demandByService = services
+    .map((service) => ({
+      service,
+      count: userNeeds.filter((n) => n.desiredServices.includes(service)).length,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const demandByDay = DAYS_OF_WEEK.map((day) => ({
+    day,
+    count: userPreferences.filter((p) => p.preferredDays.includes(day)).length,
+  }));
+
+  const careCounts: Record<string, number> = {};
+  for (const need of userNeeds) {
+    for (const item of need.careNeeds) {
+      careCounts[item] = (careCounts[item] || 0) + 1;
+    }
+  }
+  const topCareNeeds = Object.entries(careCounts)
+    .map(([item, count]) => ({ item: item as CareNeedItem, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+
+  return {
+    totalUsers: userProfiles.length,
+    demandByArea,
+    demandByService,
+    demandByDay,
+    topCareNeeds,
   };
 }
 
@@ -193,9 +411,6 @@ export interface AdminBusinessMetrics {
   activeCasesCount: number;
 }
 
-/**
- * 運営管理者向けの事業KPI・売上試算を計算する純粋関数
- */
 export function calculateAdminBusinessMetrics(params: {
   users: UserProfile[];
   providers: ProviderProfile[];
@@ -236,7 +451,6 @@ export function calculateAdminBusinessMetrics(params: {
   const conversionRate =
     totalProviders > 0 ? Math.round((paidCount / totalProviders) * 100) : 0;
 
-  // 初期目標50事業所登録時に同じ有料契約率（または最低60%）だった場合の月額売上試算
   const effectiveRate = conversionRate > 0 ? conversionRate / 100 : 0.6;
   const simulatedTarget50RevenueYen = Math.round(
     50 * effectiveRate * standardPrice

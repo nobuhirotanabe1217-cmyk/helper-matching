@@ -12,7 +12,9 @@ import {
   ProviderReactionStatus,
   UserPII,
 } from '../types/domain';
+import { getCurrentYearMonth } from '../utils/date';
 import { calculateMatchResult } from '../utils/matching';
+import { verifyProviderChatAccess } from '../utils/subscription';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
 import { buildUserDetailForProviderSpeechText } from '../utils/speech';
@@ -22,10 +24,13 @@ export const UserDetailForProvider: React.FC = () => {
     activeProviderId,
     currentProviderBundle,
     currentProviderPlanDef,
+    currentProviderSubscription,
+    subscriptionPlans,
     isCurrentProviderPaid,
     selectedUserIdForDetail,
     getUserBundleById,
     interactions,
+    chatRequests,
     setProviderReactionToUser,
     getDisclosureStage,
     getChatRequestBetween,
@@ -45,23 +50,20 @@ export const UserDetailForProvider: React.FC = () => {
   >('idle');
   const [piiCheckMessage, setPiiCheckMessage] = useState<string>('');
 
+  // 第3段階連絡先開示の権限検証（プランに関わらず利用者の第3段階同意有無のみで厳密に検証）
   const handleRequestPiiVerification = () => {
-    if (!isCurrentProviderPaid) {
-      setShowChatUpgradeModal(true);
-      return;
-    }
     const result = getPiiIfPermitted(userId);
     if (result.permitted && result.data) {
       setPiiData(result.data);
       setPiiCheckStatus('granted');
       setPiiCheckMessage(
-        '【認可成功】本人による第3段階同意（連絡先開示）およびRBACアクセス権限の検証に合格しました。連絡先情報を表示します（監査ログ記録済）。'
+        '【認可成功】面談/見学日程確定後の第3段階「連絡先開示」に利用者が同意済みのため、連絡先情報を表示します。'
       );
     } else {
       setPiiData(null);
       setPiiCheckStatus('denied');
       setPiiCheckMessage(
-        `【403 Forbidden / Zero-Trust拒否】${result.reason}。サーバーサイドで領域A（本人特定情報）へのアクセスが即時遮断されました。不正アクセス試行としてセキュリティ監査ログに記録されました。`
+        `【アクセス制限】${result.reason}（氏名・電話番号・メールは第3段階同意まで遮断されます）。`
       );
     }
   };
@@ -89,31 +91,51 @@ export const UserDetailForProvider: React.FC = () => {
   const currentReaction = interaction?.providerReaction || '未対応';
   const disclosure = getDisclosureStage(userId, activeProviderId);
   const chatReq = getChatRequestBetween(userId, activeProviderId);
+  const stage2Unlocked = disclosure.stage >= 2;
+  const stage3Unlocked =
+    disclosure.stage === 3 && Boolean(disclosure.disclosedFields.piiContactAccess);
 
   const handleSelectReaction = (reaction: ProviderReactionStatus) => {
+    if (reaction === 'メッセージを送る') {
+      if (chatReq?.status === 'approved') {
+        openChatWith(userId);
+        return;
+      }
+      const access = verifyProviderChatAccess({
+        subscription: currentProviderSubscription,
+        plans: subscriptionPlans,
+        chatRequest: chatReq,
+        allProviderChatRequests: chatRequests,
+        currentYearMonth: getCurrentYearMonth(),
+      });
+      if (!access.canRequestChat && !access.canSendMessage) {
+        setShowChatUpgradeModal(true);
+        return;
+      }
+      const res = sendChatRequest(
+        userId,
+        activeProviderId,
+        'provider',
+        'ご登録の希望条件を拝見しました。まずは匿名相談にて一度詳しくお話を伺いたいです。'
+      );
+      if (!res.ok) {
+        setShowChatUpgradeModal(true);
+        return;
+      }
+      setProviderReactionToUser(userId, activeProviderId, reaction);
+      setActionBanner(
+        `「${profile.anonymousCode}」へチャット開始申請を送信しました。利用者が承認すると第1段階「匿名相談」が始まります。`
+      );
+      return;
+    }
+
     if (!isCurrentProviderPaid) {
       setShowChatUpgradeModal(true);
       return;
     }
     setProviderReactionToUser(userId, activeProviderId, reaction);
-    if (reaction === 'メッセージを送る') {
-      if (chatReq?.status === 'approved') {
-        openChatWith(userId);
-      } else {
-        sendChatRequest(
-          userId,
-          activeProviderId,
-          'provider',
-          'ご登録の希望条件を拝見しました。一度詳しくお話を伺いたいです。'
-        );
-        setActionBanner(
-          `「${profile.anonymousCode}」へチャット開始申請を送信しました。利用者・ご家族が承認するとチャット画面でメッセージ交換が可能になります。`
-        );
-      }
-      return;
-    }
     setActionBanner(
-      `「${profile.anonymousCode}」への対応ステータスを「${reaction}」に設定しました。利用者側の画面にも通知されます。`
+      `「${profile.anonymousCode}」への進捗ステータスを「${reaction}」に更新しました。`
     );
   };
 
@@ -160,20 +182,22 @@ export const UserDetailForProvider: React.FC = () => {
         </div>
       </div>
 
-      {/* 基本ヘッダー＆4つの事業所リアクションボタン */}
+      {/* 基本ヘッダー＆対応アクション */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-200 pb-5">
           <div className="space-y-1.5">
             <p className="text-sm font-bold text-teal-800">
-              情報開示レベル：第{disclosure.stage}段階（
-              {disclosure.stage === 3
-                ? '本人同意により詳細相談情報を開示済み'
-                : '匿名情報のみ公開'}
-              ） · 登録時期：{profile.registeredAt || '2026年11月'}
+              現在の情報開示段階：
+              {disclosure.stage === 1
+                ? '第1段階「匿名相談」（連絡先・障害詳細非公開）'
+                : disclosure.stage === 2
+                ? '第2段階「条件の開示済み」（障害種別・特性・希望曜日公開）'
+                : '第3段階「連絡先開示済み」（面談/見学日程確定後）'}
+              {' · '}登録：{profile.registeredAt || '最新'}
             </p>
             <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">
               【{profile.anonymousCode}】希望地域：{profile.city}
-              {isCurrentProviderPaid && `（${profile.ageGroup}・${profile.gender}）`}
+              {stage2Unlocked && `（${profile.nickname}・${profile.ageGroup}）`}
             </h1>
             <p className="text-base text-slate-700 font-medium">
               希望サービス：{needs.desiredServices.join(' · ')} ／ 受給者証：
@@ -186,7 +210,7 @@ export const UserDetailForProvider: React.FC = () => {
               {match.judgment}
             </span>
             <span className="block text-2xl font-bold font-mono tabular-nums text-teal-900">
-              マッチング度 {match.breakdown.totalScore}%
+              適合度 {match.breakdown.totalScore}%
             </span>
           </div>
         </div>
@@ -200,16 +224,15 @@ export const UserDetailForProvider: React.FC = () => {
           </div>
         )}
 
-        {/* 事業所が利用者に関心を持った場合の操作 */}
         <div className="space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-bold text-slate-900">
-              この利用希望者への対応アクション・ステータス管理（現在：
+              この利用希望者への対応アクション・進捗（現在：
               <span className="text-teal-900">{currentReaction}</span>）
             </h2>
             {!isCurrentProviderPaid && (
               <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2.5 py-1 rounded-lg">
-                ※チャット開始申請・案件管理は有料プラン機能です
+                ※候補者の進捗記録管理は有料プラン機能です（申請は月1件まで無料可）
               </span>
             )}
           </div>
@@ -225,7 +248,7 @@ export const UserDetailForProvider: React.FC = () => {
                   : 'bg-white border-teal-700 text-teal-900 hover:bg-teal-50'
               }`}
             >
-              <span>1. 対応中・検討したい</span>
+              <span>1. 対応を検討したい</span>
               {currentReaction === '対応を検討したい' && (
                 <Check className="w-5 h-5" />
               )}
@@ -281,80 +304,41 @@ export const UserDetailForProvider: React.FC = () => {
         </div>
       </section>
 
-      {/* 段階的情報開示ステータス表示（第1・2段階 vs 第3段階同意後） */}
+      {/* 段階的情報開示ステータス表示（第1・2・3段階） */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 space-y-4">
         <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-          {disclosure.stage === 3 ? (
+          {stage3Unlocked ? (
             <ShieldCheck className="w-6 h-6 text-teal-800" />
           ) : (
             <Lock className="w-5 h-5 text-slate-600" />
           )}
-          本人の同意による追加開示情報（第3段階）
+          第3段階「連絡先の開示」状況（面談・見学日程決定後）
         </h2>
 
-        {disclosure.stage === 3 ? (
-          <div className="p-4 sm:p-5 rounded-xl bg-teal-50/70 border border-teal-300 space-y-3">
-            <p className="text-sm font-bold text-teal-950">
-              利用者本人の同意により、以下の相談・連絡用情報が開示されています（同意日時：
-              {disclosure.consentedAt || '本日'}）
-            </p>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm bg-white p-4 rounded-xl border border-teal-200">
-              <div>
-                <dt className="text-slate-500">ニックネーム・登録者の立場</dt>
-                <dd className="font-bold text-slate-900 text-base mt-0.5">
-                  {profile.nickname}（{profile.disclosableInfo.contactPersonRole}
-                  ）
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">最寄り駅・訪問エリア詳細</dt>
-                <dd className="font-bold text-slate-900 text-base mt-0.5">
-                  {profile.disclosableInfo.nearestStationArea}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">担当相談支援事業所</dt>
-                <dd className="font-bold text-slate-900 text-base mt-0.5">
-                  {profile.disclosableInfo.consultationSupportOffice}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">具体的な希望日時メモ</dt>
-                <dd className="font-bold text-slate-900 text-base mt-0.5">
-                  {profile.disclosableInfo.detailedScheduleNote}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        ) : (
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700 space-y-1.5">
-            <p className="font-bold text-slate-900">
-              現在は第{disclosure.stage}段階（匿名状態）のため、最寄り駅や担当相談支援事業所などの情報は非公開です。
-            </p>
-            <p>
-              チャットで相談を進め、利用者側が「この情報を事業所に開示する」ボタンを押した場合にのみ、ここに詳細情報が表示されます。
-            </p>
+        {disclosure.scheduleSummary && (
+          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-950">
+            確定日程：{disclosure.scheduleSummary}（確定日時：{disclosure.scheduleDecidedAt}）
           </div>
         )}
 
-        {/* 領域A（本人特定情報）アクセス制御＆Zero-Trust検証カード */}
-        <div className="pt-3 border-t border-slate-200 space-y-3">
+        <div className="pt-2 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="space-y-0.5">
               <span className="text-xs font-bold text-red-800 bg-red-100 px-2 py-0.5 rounded">
-                領域A: 本人特定情報（氏名・電話番号・詳細住所）
+                保護対象：氏名・電話番号・メールアドレス
               </span>
               <p className="text-xs text-slate-600">
-                本人の明示的同意がない限り事業所側へのAPI提供は拒否されます（Zero-Trust設計）。
+                チャットで「面談」または「見学」の日程が決まり、本人が第3段階開示に同意した場合のみ取得できます。
               </p>
             </div>
             <button
               type="button"
+              data-testid="verify-pii-access-btn"
               onClick={handleRequestPiiVerification}
               className="min-h-[44px] px-4 py-2 rounded-xl border-2 border-slate-800 hover:bg-slate-100 text-slate-900 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shrink-0"
             >
               <Lock className="w-3.5 h-3.5" aria-hidden="true" />
-              連絡先情報のアクセス権限を検証
+              連絡先情報（第3段階）を確認する
             </button>
           </div>
 
@@ -379,7 +363,7 @@ export const UserDetailForProvider: React.FC = () => {
               {piiCheckStatus === 'granted' && piiData && (
                 <div className="p-3 bg-white rounded-lg border border-teal-200 text-xs text-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                   <div>
-                    <span className="text-slate-500">氏名（架空）：</span>
+                    <span className="text-slate-500">氏名：</span>
                     <strong className="text-slate-900 ml-1">
                       {piiData.fullName}（{piiData.fullNameKana}）
                     </strong>
@@ -397,15 +381,9 @@ export const UserDetailForProvider: React.FC = () => {
                     </strong>
                   </div>
                   <div>
-                    <span className="text-slate-500">詳細住所（番地等）：</span>
+                    <span className="text-slate-500">詳細住所：</span>
                     <strong className="text-slate-900 ml-1">
                       {piiData.detailedAddress}
-                    </strong>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <span className="text-slate-500">緊急連絡先：</span>
-                    <strong className="text-slate-900 ml-1">
-                      {piiData.emergencyContactName}（{piiData.emergencyContactPhone}）
                     </strong>
                   </div>
                 </div>
@@ -415,137 +393,145 @@ export const UserDetailForProvider: React.FC = () => {
         </div>
       </section>
 
-      {/* 詳しい支援ニーズ・身体状況・配慮事項 */}
+      {/* 第2段階「条件の開示」領域 */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 space-y-6">
-        <h2 className="text-xl font-bold text-slate-900 border-b border-slate-200 pb-3">
-          利用希望者の詳しい支援ニーズ・希望条件
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+          <h2 className="text-xl font-bold text-slate-900">
+            支援ニーズ・特性プロフィール（第2段階開示）
+          </h2>
+          <span
+            className={`text-xs font-bold px-2.5 py-1 rounded-md border ${
+              stage2Unlocked
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                : 'bg-slate-100 border-slate-200 text-slate-700'
+            }`}
+          >
+            {stage2Unlocked ? '第2段階：条件開示済み' : '第1段階（詳細マスク中）'}
+          </span>
+        </div>
 
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-base">
-          <div>
-            <dt className="text-sm font-bold text-slate-500">
-              障害種別・障害支援区分
-            </dt>
-            <dd className="font-bold text-slate-900 mt-1">
-              {needs.disabilityTypes.join(' · ')} ／ 支援区分：
-              {needs.supportCategory}
-            </dd>
+        {!stage2Unlocked ? (
+          <div className="p-5 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-sm text-slate-700">
+            <p className="font-bold text-slate-900 flex items-center gap-2">
+              <Lock className="w-4 h-4 text-slate-500" />
+              現在は第1段階「匿名相談」のため、障害種別・特性プロフィールの詳細は非公開です。
+            </p>
+            <p>
+              希望概要：{profile.briefSummaryForFreePlan || `${profile.city}での${needs.desiredServices.join('・')}希望`}
+            </p>
+            <p className="text-xs text-slate-600">
+              チャット上で相談を進め、利用者が「第2段階：条件の開示」に同意すると、障害種別・介助内容・特性（苦手なこと・配慮してほしいこと）・希望曜日がここに表示されます。
+            </p>
           </div>
+        ) : (
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-base">
+            <div>
+              <dt className="text-sm font-bold text-slate-500">
+                障害種別・障害支援区分
+              </dt>
+              <dd className="font-bold text-slate-900 mt-1">
+                {needs.disabilityTypes.join(' · ')} ／ 支援区分：
+                {needs.supportCategory}
+              </dd>
+            </div>
 
-          <div>
-            <dt className="text-sm font-bold text-slate-500">
-              ヘルパーの性別に関する希望
-            </dt>
-            <dd className="font-bold text-slate-900 mt-1">
-              {preferences.helperGenderPreference}
-              {preferences.isGenderPreferenceStrict
-                ? '（必須条件）'
-                : '（できれば希望）'}
-            </dd>
-          </div>
+            <div>
+              <dt className="text-sm font-bold text-slate-500">
+                ヘルパーの性別に関する希望
+              </dt>
+              <dd className="font-bold text-slate-900 mt-1">
+                {preferences.helperGenderPreference}
+                {preferences.isGenderPreferenceStrict
+                  ? '（必須条件）'
+                  : '（できれば希望）'}
+              </dd>
+            </div>
 
-          <div className="sm:col-span-2">
-            <dt className="text-sm font-bold text-slate-500">
-              日常生活上の支援ニーズ（●は貴事業所で対応可能な項目）
-            </dt>
-            <dd className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-              {needs.careNeeds.map((c) => {
-                const canSupport =
-                  currentProviderBundle.capabilities.supportedCareItems.includes(
-                    c
-                  );
-                return (
-                  <div
-                    key={c}
-                    className={`p-2.5 rounded-lg border font-bold ${
-                      canSupport
-                        ? 'bg-teal-50 border-teal-600 text-teal-950'
-                        : 'bg-amber-50 border-amber-400 text-amber-950'
-                    }`}
-                  >
-                    {canSupport ? '● 対応可：' : '▲ 要確認：'}
-                    {c}
-                  </div>
-                );
-              })}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm font-bold text-slate-500">
-              身体状況・介助方法
-            </dt>
-            <dd className="font-medium text-slate-900 mt-1">
-              {needs.physicalConditions.join(' · ') || '特になし'}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm font-bold text-slate-500">
-              コミュニケーション・行動面の配慮
-            </dt>
-            <dd className="font-medium text-slate-900 mt-1">
-              {needs.communicationConsiderations.join(' · ') || '特になし'}
-            </dd>
-          </div>
-
-          {needs.communicationFreeText && (
             <div className="sm:col-span-2">
               <dt className="text-sm font-bold text-slate-500">
-                コミュニケーション・介助手順の補足（自由記述）
+                必要な介助内容（●＝貴事業所で対応可能）
               </dt>
-              {isCurrentProviderPaid ? (
-                <dd className="text-slate-800 mt-1 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                  {needs.communicationFreeText}
-                </dd>
-              ) : (
-                <dd className="text-xs sm:text-sm text-slate-600 mt-1 p-3.5 rounded-xl bg-slate-100 border border-slate-200 flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span>
-                    個人の推測・特定を防ぐため、無料プランでは自由記述の詳細な相談内容は非表示となっています（概要：{profile.briefSummaryForFreePlan}）。
-                  </span>
-                </dd>
-              )}
+              <dd className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+                {needs.careNeeds.map((c) => {
+                  const canSupport =
+                    currentProviderBundle.capabilities.supportedCareItems.includes(
+                      c
+                    );
+                  return (
+                    <div
+                      key={c}
+                      className={`p-2.5 rounded-lg border font-bold ${
+                        canSupport
+                          ? 'bg-teal-50 border-teal-600 text-teal-950'
+                          : 'bg-amber-50 border-amber-400 text-amber-950'
+                      }`}
+                    >
+                      {canSupport ? '● 対応可：' : '▲ 要確認：'}
+                      {PROVIDER_CARE_LABELS[c] || c}
+                    </div>
+                  );
+                })}
+              </dd>
             </div>
-          )}
 
-          <div>
-            <dt className="text-sm font-bold text-slate-500">
-              希望曜日・希望時間帯
-            </dt>
-            <dd className="font-bold text-slate-900 mt-1">
-              {preferences.preferredDays.join('・')}曜日 ／{' '}
-              {preferences.preferredTimeSlots.join('・')}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm font-bold text-slate-500">
-              希望頻度・利用開始希望時期
-            </dt>
-            <dd className="font-bold text-slate-900 mt-1">
-              {preferences.frequency} ／ {preferences.startTiming}
-            </dd>
-          </div>
-
-          <div className="sm:col-span-2">
-            <dt className="text-sm font-bold text-slate-500">
-              事業所に知っておいてほしいこと（自由記述）
-            </dt>
-            {isCurrentProviderPaid ? (
-              <dd className="text-slate-900 mt-1 p-4 rounded-xl bg-teal-50/50 border border-teal-200">
-                {preferences.freeMessageToProvider || '記載なし'}
+            <div>
+              <dt className="text-sm font-bold text-slate-500">
+                身体状況・介助方法
+              </dt>
+              <dd className="font-medium text-slate-900 mt-1">
+                {needs.physicalConditions.join(' · ') || '特になし'}
               </dd>
-            ) : (
-              <dd className="text-xs sm:text-sm text-slate-600 mt-1 p-4 rounded-xl bg-slate-100 border border-slate-200 flex items-center gap-2">
-                <Lock className="w-4 h-4 text-slate-500 shrink-0" />
-                <span>
-                  無料プランでは自由記述の相談内容は表示されません。有料プラン契約および本人承認後に詳細をご確認いただけます。
-                </span>
+            </div>
+
+            <div>
+              <dt className="text-sm font-bold text-slate-500">
+                コミュニケーションの方法
+              </dt>
+              <dd className="font-medium text-slate-900 mt-1">
+                {needs.communicationConsiderations.join(' · ') || '特になし'}
               </dd>
+            </div>
+
+            {needs.dislikesAndAccommodations && (
+              <div className="sm:col-span-2">
+                <dt className="text-sm font-bold text-slate-500">
+                  特性プロフィール：苦手なこと・配慮してほしいこと
+                </dt>
+                <dd className="text-slate-900 mt-1 p-3.5 rounded-xl bg-amber-50/60 border border-amber-200 text-sm">
+                  {needs.dislikesAndAccommodations}
+                </dd>
+              </div>
             )}
-          </div>
-        </dl>
+
+            <div>
+              <dt className="text-sm font-bold text-slate-500">
+                希望曜日・希望時間帯
+              </dt>
+              <dd className="font-bold text-slate-900 mt-1">
+                {preferences.preferredDays.join('・')}曜日 ／{' '}
+                {preferences.preferredTimeSlots.join('・')}
+              </dd>
+            </div>
+
+            <div>
+              <dt className="text-sm font-bold text-slate-500">
+                希望頻度・利用開始希望時期
+              </dt>
+              <dd className="font-bold text-slate-900 mt-1">
+                {preferences.frequency} ／ {preferences.startTiming}
+              </dd>
+            </div>
+
+            <div className="sm:col-span-2">
+              <dt className="text-sm font-bold text-slate-500">
+                自由記述・メッセージ
+              </dt>
+              <dd className="text-slate-900 mt-1 p-4 rounded-xl bg-teal-50/50 border border-teal-200 text-sm">
+                {preferences.freeMessageToProvider || needs.communicationFreeText || '記載なし'}
+              </dd>
+            </div>
+          </dl>
+        )}
       </section>
     </div>
   );

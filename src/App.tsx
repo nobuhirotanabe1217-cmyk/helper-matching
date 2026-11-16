@@ -20,6 +20,7 @@ import { GoogleDriveView } from './components/GoogleDriveView';
 import { RegistrationView } from './components/RegistrationView';
 import { RegistrationCompleteView } from './components/RegistrationCompleteView';
 import { LoginView } from './components/LoginView';
+import { CoordinatorView } from './components/CoordinatorView';
 import { FreePlanChatUpgradeModal } from './components/VisualHelpers';
 import { CheckCircle2, X } from 'lucide-react';
 
@@ -103,6 +104,7 @@ const MainRouter: React.FC = () => {
         {currentView === 'provider-search' && <ProviderSearchUsers />}
         {currentView === 'provider-user-detail' && <UserDetailForProvider />}
         {currentView === 'provider-billing' && <ProviderBillingView />}
+        {currentView === 'coordinator-dashboard' && <CoordinatorView />}
         {currentView === 'admin-security' && <AdminSecurityConsole />}
         {currentView === 'chat' && <ChatView />}
         {currentView === 'google-drive' && <GoogleDriveView />}

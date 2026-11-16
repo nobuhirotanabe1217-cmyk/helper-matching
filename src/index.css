@@ -18,7 +18,7 @@
 
   .font-mono,
   .tabular-nums {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'JetBrains Mono', 'Noto Sans JP', monospace;
     font-variant-numeric: tabular-nums;
   }
 }
@@ -33,12 +33,37 @@
   outline-offset: 2px;
 }
 
-/* 大きめ文字モード */
+/* 1. 文字サイズ設定 */
 html.a11y-large-text {
   font-size: 18px;
 }
 
-/* 高コントラスト＆太枠フォーカス表示（弱視・ロービジョン対応） */
+html.a11y-xl-text {
+  font-size: 20px;
+}
+
+/* 2. 行間・余白調整 */
+html.a11y-wide-leading,
+html.a11y-wide-leading body,
+html.a11y-wide-leading p,
+html.a11y-wide-leading li,
+html.a11y-wide-leading label {
+  line-height: 2.0 !important;
+  letter-spacing: 0.03em;
+}
+
+/* 3. フォント調整（丸ゴ・読みやすいUD風 / 明朝体） */
+html.a11y-font-rounded,
+html.a11y-font-rounded body {
+  font-family: 'Hiragino Maru Gothic ProN', 'BIZ UDPGothic', 'Plus Jakarta Sans', 'Noto Sans JP', sans-serif;
+}
+
+html.a11y-font-mincho,
+html.a11y-font-mincho body {
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif JP', serif;
+}
+
+/* 4. 高コントラスト＆太枠フォーカス表示 */
 html.a11y-high-contrast body {
   background-color: #ffffff;
   color: #020617;
@@ -52,17 +77,40 @@ html.a11y-high-contrast :focus-visible {
 html.a11y-high-contrast .text-slate-400,
 html.a11y-high-contrast .text-slate-500,
 html.a11y-high-contrast .text-slate-600 {
-  color: #1e293b !important;
+  color: #0f172a !important;
 }
 
 html.a11y-high-contrast .border-slate-200,
 html.a11y-high-contrast .border-slate-100 {
-  border-color: #64748b !important;
+  border-color: #475569 !important;
 }
 
 html.a11y-high-contrast button.underline,
 html.a11y-high-contrast a {
   text-decoration-thickness: 2px;
+}
+
+/* 5. 色覚サポート（CUD：赤と緑の識別に依存しない青×オレンジ系コントラスト強調） */
+html.a11y-color-cud .bg-emerald-600,
+html.a11y-color-cud .bg-teal-800 {
+  background-color: #005aaf !important;
+}
+
+html.a11y-color-cud .bg-emerald-50,
+html.a11y-color-cud .bg-teal-50 {
+  background-color: #eff6ff !important;
+}
+
+html.a11y-color-cud .text-emerald-900,
+html.a11y-color-cud .text-teal-800,
+html.a11y-color-cud .text-teal-900 {
+  color: #004080 !important;
+}
+
+html.a11y-color-cud .bg-rose-500,
+html.a11y-color-cud .bg-rose-600,
+html.a11y-color-cud .bg-amber-500 {
+  background-color: #c2410c !important;
 }
 
 /* アニメーション酔い・スクリーンリーダー負担軽減 */
@@ -76,4 +124,3 @@ html.a11y-high-contrast a {
     scroll-behavior: auto !important;
   }
 }
-

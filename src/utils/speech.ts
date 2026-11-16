@@ -84,7 +84,8 @@ const VIEW_ANNOUNCEMENTS: Record<AppView, string> = {
   'provider-wizard': '事業所条件・空き枠の編集画面',
   'provider-search': '利用希望者一覧',
   'provider-user-detail': '利用希望者の詳細画面',
-  'provider-billing': '料金プラン・決済管理画面',
+  'provider-billing': '料金プラン・お支払い管理画面',
+  'coordinator-dashboard': '相談支援専門員ワークスペース',
   'admin-security': '運営管理者コンソール',
   chat: 'チャット・相談画面',
   'google-drive': 'Google ドライブ連携画面',
@@ -92,6 +93,19 @@ const VIEW_ANNOUNCEMENTS: Record<AppView, string> = {
 
 export function getViewTitleForAnnouncement(view: AppView): string {
   return VIEW_ANNOUNCEMENTS[view] || 'ケアピタ';
+}
+
+export function buildCoordinatorDashboardSpeechText(params: {
+  coordinatorName: string;
+  officeName: string;
+  sharedCasesCount: number;
+  providerCount: number;
+}): string {
+  return [
+    `相談支援専門員ワークスペースです。${params.officeName}の${params.coordinatorName}さんとして利用中です。`,
+    `利用者から共有されている相談ケースは${params.sharedCasesCount}件、登録されている事業所は${params.providerCount}社あります。`,
+    '利用者から共有された希望条件と特性プロフィールをもとに、受入条件カードの合う事業所を比較できます。',
+  ].join(' ');
 }
 
 export function buildTopScreenSpeechText(params: {

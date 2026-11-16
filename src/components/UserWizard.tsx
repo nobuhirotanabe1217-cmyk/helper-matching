@@ -223,7 +223,7 @@ export const UserWizard: React.FC = () => {
 
         <div className="space-y-1">
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-            利用希望条件の登録・変更（ステップ {userWizardStep} / 4）
+            利用希望条件・特性プロフィールの登録（今は {userWizardStep} 番目／全部で 4 ステップ）
           </h1>
           <p className="text-sm text-slate-600">
             氏名・詳細住所・電話番号の入力は不要です。あてはまるカードをタップして選んでください。
@@ -897,10 +897,35 @@ export const UserWizard: React.FC = () => {
 
             <div className="space-y-2 pt-2">
               <label
+                htmlFor="dislikes-accommodations"
+                className="block text-base font-bold text-slate-900"
+              >
+                苦手なこと・配慮してほしいこと（特性プロフィール）
+              </label>
+              <p className="text-xs sm:text-sm text-slate-600">
+                大きな音・人混み・急な予定変更など、事前にヘルパーへ知っておいてほしい配慮事項を記入できます。
+              </p>
+              <textarea
+                id="dislikes-accommodations"
+                rows={3}
+                value={needs.dislikesAndAccommodations || ''}
+                onChange={(e) =>
+                  setNeeds({
+                    ...needs,
+                    dislikesAndAccommodations: e.target.value,
+                  })
+                }
+                placeholder="例：大きな声や急な予定変更が苦手です。初めて行く場所では前日に予定を伝えていただけると安心します。"
+                className="w-full p-3.5 rounded-xl border border-slate-300 text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+              />
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <label
                 htmlFor="comm-free-text"
                 className="block text-base font-bold text-slate-900"
               >
-                コミュニケーションや配慮事項の補足メモ（任意）
+                コミュニケーションの工夫・補足メモ（任意）
               </label>
               <textarea
                 id="comm-free-text"
@@ -912,7 +937,7 @@ export const UserWizard: React.FC = () => {
                     communicationFreeText: e.target.value,
                   })
                 }
-                placeholder="例：急な予定変更が苦手なため、事前に行く場所を写真やメモで伝えていただくと安心できます。"
+                placeholder="例：ゆっくり短い文でお話しいただくか、メモに書いて伝えていただくと助かります。"
                 className="w-full p-3.5 rounded-xl border border-slate-300 text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
               />
             </div>

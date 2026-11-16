@@ -14,6 +14,7 @@ import {
   CareNeedItem,
   DayOfWeek,
   PROVIDER_CARE_LABELS,
+  PROVIDER_DISABILITY_OPTIONS,
   ProviderAcceptanceStatus,
   ProviderAvailability,
   ProviderCapabilities,
@@ -22,20 +23,12 @@ import {
   ProviderProfile,
   SERVICE_TYPES,
   ServiceType,
+  SUPPORTED_COMMUNICATION_METHODS,
+  SupportDetailPolicy,
   TIME_SLOTS,
   TimeSlot,
 } from '../types/domain';
-
-const PROVIDER_DISABILITIES: ProviderCapabilityDisability[] = [
-  '身体障害',
-  '知的障害',
-  '精神障害',
-  '視覚障害',
-  '重度障害',
-  '行動面で配慮が必要な方',
-  '医療的な配慮が必要な方',
-  'その他',
-];
+import { validateDesignatedOfficeNumber } from '../utils/payment';
 
 const PROVIDER_GENDER_POLICIES: ProviderGenderPolicy[] = [
   '男女どちらも対応可能',
@@ -51,6 +44,12 @@ const ACCEPTANCE_STATUSES: ProviderAcceptanceStatus[] = [
   '一部の曜日・時間帯のみ受け入れ可能',
   '問い合わせのみ受け付ける',
   '現在は受け入れ困難',
+];
+
+const SUPPORT_POLICIES: SupportDetailPolicy[] = [
+  '対応可能',
+  '条件付きで相談可',
+  '対応不可',
 ];
 
 export const ProviderWizard: React.FC = () => {
@@ -82,7 +81,11 @@ export const ProviderWizard: React.FC = () => {
   }, [currentProviderBundle.profile.id]);
 
   const persistDraft = () => {
-    saveProviderBundle({ profile, capabilities, availability });
+    const numCheck = validateDesignatedOfficeNumber(profile.designatedNumber);
+    const nextProfile = numCheck.valid
+      ? { ...profile, designatedNumber: numCheck.normalized }
+      : profile;
+    saveProviderBundle({ profile: nextProfile, capabilities, availability });
   };
 
   const toggleItem = <T extends string>(list: T[], item: T): T[] => {
@@ -95,6 +98,13 @@ export const ProviderWizard: React.FC = () => {
     if (step === 1) {
       if (!profile.name.trim()) {
         setErrorMessage('事業所名を入力してください。');
+        return false;
+      }
+      const numCheck = validateDesignatedOfficeNumber(profile.designatedNumber);
+      if (!numCheck.valid) {
+        setErrorMessage(
+          numCheck.error || '指定事業所番号（10桁の半角数字）を入力してください。'
+        );
         return false;
       }
       if (profile.serviceTypes.length === 0) {
@@ -110,7 +120,7 @@ export const ProviderWizard: React.FC = () => {
     }
     if (step === 2) {
       if (capabilities.supportedCareItems.length === 0) {
-        setErrorMessage('対応可能な支援・介助内容を1つ以上選んでください。');
+        setErrorMessage('対応可能な介助内容を1つ以上選んでください。');
         return false;
       }
     }
@@ -145,7 +155,7 @@ export const ProviderWizard: React.FC = () => {
       return;
     }
     persistDraft();
-    navigateTo('provider-search');
+    navigateTo('provider-dashboard');
   };
 
   const updateDaySchedule = (
@@ -163,9 +173,9 @@ export const ProviderWizard: React.FC = () => {
   };
 
   const steps = [
-    { num: 1, title: '基本情報・受け入れ状況' },
-    { num: 2, title: '対応可能な介助・障害特性' },
-    { num: 3, title: '性別対応・曜日別時間帯' },
+    { num: 1, title: '指定番号・アピール' },
+    { num: 2, title: '介助・障害・支援細目' },
+    { num: 3, title: '性別対応・曜日時間帯' },
   ];
 
   return (
@@ -181,7 +191,7 @@ export const ProviderWizard: React.FC = () => {
             className="min-h-[44px] px-3 py-2 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-            事業所ホームへ戻る
+            事業所マイページへ戻る
           </button>
 
           <div className="flex items-center gap-2">
@@ -189,24 +199,28 @@ export const ProviderWizard: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                if (!validateStep(1)) {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  return;
+                }
                 persistDraft();
-                setSavedBanner('事業所の登録内容を保存しました。');
+                setSavedBanner('受入条件カードの内容と最終更新日を保存しました。');
                 setTimeout(() => setSavedBanner(''), 3500);
               }}
               className="min-h-[44px] px-3.5 py-2 rounded-xl border border-teal-700 text-teal-900 bg-teal-50 hover:bg-teal-100 text-sm font-bold flex items-center gap-1.5 cursor-pointer"
             >
               <Save className="w-4 h-4" aria-hidden="true" />
-              一時保存する
+              保存する
             </button>
           </div>
         </div>
 
         <div className="space-y-1">
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-            事業所情報・受け入れ条件の登録（ステップ {providerWizardStep} / 3）
+            受入条件カード・事業所情報の編集（今は {providerWizardStep} 番目／全部で 3 ステップ）
           </h1>
           <p className="text-sm text-slate-600">
-            1つの事業所で複数のサービス（居宅介護＋重度訪問介護＋移動支援＋同行援護）を登録できます。
+            「受入可能条件カード」を登録しておくと、希望条件が合う利用者から相談が届きやすくなります。
           </p>
         </div>
 
@@ -229,7 +243,7 @@ export const ProviderWizard: React.FC = () => {
                 }`}
               >
                 <span className="block text-xs opacity-85">
-                  ステップ {s.num}
+                  {s.num} 番目
                 </span>
                 <span className="block text-sm truncate">{s.title}</span>
               </button>
@@ -260,34 +274,62 @@ export const ProviderWizard: React.FC = () => {
         </div>
       )}
 
-      {/* ==================== STEP 1: 基本情報・現在の受け入れ状況 ==================== */}
+      {/* ==================== STEP 1: 基本情報・指定事業所番号・ひとことアピール ==================== */}
       {providerWizardStep === 1 && (
         <div className="space-y-6">
           <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
             <h2 className="text-xl font-bold text-slate-900 border-b border-slate-200 pb-3">
-              1. 事業所の基本情報
+              1. 事業所の基本情報・指定事業所番号
             </h2>
 
-            <div className="space-y-2">
-              <label
-                htmlFor="prov-name"
-                className="block text-base font-bold text-slate-900"
-              >
-                事業所名
-                <span className="ml-2 text-xs font-bold text-red-700">
-                  【必須】
-                </span>
-              </label>
-              <input
-                id="prov-name"
-                type="text"
-                value={profile.name}
-                onChange={(e) =>
-                  setProfile({ ...profile, name: e.target.value })
-                }
-                placeholder="例：あおぞらケアセンター杉並"
-                className="w-full min-h-[50px] px-4 py-2.5 rounded-xl border border-slate-300 text-base text-slate-900"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label
+                  htmlFor="prov-name"
+                  className="block text-base font-bold text-slate-900"
+                >
+                  事業所名
+                  <span className="ml-2 text-xs font-bold text-red-700">
+                    【必須】
+                  </span>
+                </label>
+                <input
+                  id="prov-name"
+                  type="text"
+                  value={profile.name}
+                  onChange={(e) =>
+                    setProfile({ ...profile, name: e.target.value })
+                  }
+                  placeholder="例：あおぞらケアセンター杉並"
+                  className="w-full min-h-[50px] px-4 py-2.5 rounded-xl border border-slate-300 text-base text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="prov-designated-num"
+                  className="block text-base font-bold text-slate-900"
+                >
+                  指定事業所番号（10桁）
+                  <span className="ml-2 text-xs font-bold text-red-700">
+                    【必須】
+                  </span>
+                </label>
+                <input
+                  id="prov-designated-num"
+                  type="text"
+                  inputMode="numeric"
+                  value={profile.designatedNumber}
+                  onChange={(e) =>
+                    setProfile({
+                      ...profile,
+                      designatedNumber: e.target.value,
+                    })
+                  }
+                  placeholder="例：1311501234"
+                  className="w-full min-h-[50px] px-4 py-2.5 rounded-xl border border-slate-300 text-base font-mono text-slate-900"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -315,7 +357,7 @@ export const ProviderWizard: React.FC = () => {
                   htmlFor="prov-contact"
                   className="block text-base font-bold text-slate-900"
                 >
-                  連絡担当者（試作品では仮名可）
+                  連絡担当者
                 </label>
                 <input
                   id="prov-contact"
@@ -333,10 +375,29 @@ export const ProviderWizard: React.FC = () => {
               </div>
             </div>
 
-            {/* 対応サービス（複数選択） */}
+            <div className="space-y-2">
+              <label
+                htmlFor="prov-appeal"
+                className="block text-base font-bold text-slate-900"
+              >
+                ひとことアピール（受入条件カードの上部に表示）
+              </label>
+              <input
+                id="prov-appeal"
+                type="text"
+                value={profile.appealMessage}
+                onChange={(e) =>
+                  setProfile({ ...profile, appealMessage: e.target.value })
+                }
+                placeholder="例：土曜の午前なら、車いすの方を受けられます"
+                className="w-full min-h-[48px] px-4 py-2.5 rounded-xl border border-slate-300 text-base text-slate-900"
+              />
+            </div>
+
+            {/* 対応サービス */}
             <div className="space-y-2 pt-2">
               <span className="block text-base font-bold text-slate-900">
-                提供しているサービス（複数選択できます）
+                対応サービス（複数選択可）
                 <span className="ml-2 text-xs font-bold text-red-700">
                   【必須】
                 </span>
@@ -374,10 +435,10 @@ export const ProviderWizard: React.FC = () => {
               </div>
             </div>
 
-            {/* 対応地域（複数選択） */}
+            {/* 対応地域 */}
             <div className="space-y-2 pt-2">
               <span className="block text-base font-bold text-slate-900">
-                訪問・支援の対応地域（複数選択可）
+                対応できる地域（複数選択可）
                 <span className="ml-2 text-xs font-bold text-red-700">
                   【必須】
                 </span>
@@ -415,7 +476,6 @@ export const ProviderWizard: React.FC = () => {
               </div>
             </div>
 
-            {/* 営業日・営業時間 & 紹介文 */}
             <div className="space-y-2 pt-2">
               <label
                 htmlFor="prov-hours"
@@ -453,34 +513,11 @@ export const ProviderWizard: React.FC = () => {
                 className="w-full p-3.5 rounded-xl border border-slate-300 text-base text-slate-900"
               />
             </div>
-
-            <div className="space-y-2">
-              <label
-                htmlFor="prov-message"
-                className="block text-base font-bold text-slate-900"
-              >
-                利用希望者・ご家族へのメッセージ
-              </label>
-              <textarea
-                id="prov-message"
-                rows={2}
-                value={profile.messageFromProvider}
-                onChange={(e) =>
-                  setProfile({
-                    ...profile,
-                    messageFromProvider: e.target.value,
-                  })
-                }
-                placeholder="受給者証申請中の方への案内や事前面談の方針などをご記入ください。"
-                className="w-full p-3.5 rounded-xl border border-slate-300 text-base text-slate-900"
-              />
-            </div>
           </section>
 
-          {/* 現在の受け入れ状況 */}
           <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4">
             <h2 className="text-xl font-bold text-slate-900">
-              2. 現在の受け入れ状況
+              2. 現在の受入検討方針
             </h2>
             <div className="space-y-2.5">
               {ACCEPTANCE_STATUSES.map((st) => {
@@ -510,45 +547,23 @@ export const ProviderWizard: React.FC = () => {
                 );
               })}
             </div>
-
-            <div className="space-y-2 pt-2">
-              <label
-                htmlFor="prov-acceptable-note"
-                className="block text-base font-bold text-slate-900"
-              >
-                どのような支援ニーズであれば受け入れを検討できるか（具体的な条件）
-              </label>
-              <textarea
-                id="prov-acceptable-note"
-                rows={3}
-                value={availability.acceptableConditionsNote}
-                onChange={(e) =>
-                  setAvailability({
-                    ...availability,
-                    acceptableConditionsNote: e.target.value,
-                  })
-                }
-                placeholder="例：土曜・日曜午後の移動支援（車いす可・女性ヘルパー可）や、火・木の入浴介助であればすぐ受け入れ検討可能です。"
-                className="w-full p-3.5 rounded-xl border border-slate-300 text-base text-slate-900"
-              />
-            </div>
           </section>
         </div>
       )}
 
-      {/* ==================== STEP 2: 対応可能な支援内容・障害特性・支援経験 ==================== */}
+      {/* ==================== STEP 2: 介助内容・障害特性・支援の細目 ==================== */}
       {providerWizardStep === 2 && (
         <div className="space-y-6">
           <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
             <div className="space-y-1">
               <h2 className="text-xl font-bold text-slate-900">
-                1. 対応可能な支援・介助内容を選んでください（複数選択可）
+                1. 対応できる介助内容（複数選択可）
                 <span className="ml-2 text-xs font-bold text-red-700">
                   【必須】
                 </span>
               </h2>
               <p className="text-sm text-slate-600">
-                利用者の日常生活上の支援ニーズと直接照合されます。
+                利用者の希望する介助内容と照合されます。
               </p>
             </div>
 
@@ -587,7 +602,6 @@ export const ProviderWizard: React.FC = () => {
               })}
             </div>
 
-            {/* 移乗介助・2人介助の対応可否 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-200">
               <button
                 type="button"
@@ -634,14 +648,14 @@ export const ProviderWizard: React.FC = () => {
             </div>
           </section>
 
-          {/* 対応可能な障害特性・支援経験 */}
+          {/* 対応できる障害特性 */}
           <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
             <h2 className="text-xl font-bold text-slate-900">
-              2. 対応可能な障害特性・支援経験を選んでください（複数選択可）
+              2. 対応できる障害特性（複数選択可）
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {PROVIDER_DISABILITIES.map((d) => {
+              {PROVIDER_DISABILITY_OPTIONS.map((d) => {
                 const selected = capabilities.supportedDisabilities.includes(d);
                 return (
                   <button
@@ -658,7 +672,7 @@ export const ProviderWizard: React.FC = () => {
                       })
                     }
                     aria-pressed={selected}
-                    className={`min-h-[52px] px-4 py-3 rounded-xl border-2 text-left text-base font-bold flex items-center justify-between gap-2 cursor-pointer ${
+                    className={`min-h-[50px] px-4 py-2.5 rounded-xl border-2 text-left text-sm sm:text-base font-bold flex items-center justify-between gap-2 cursor-pointer ${
                       selected
                         ? 'bg-teal-50 border-teal-700 text-teal-950'
                         : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
@@ -672,17 +686,196 @@ export const ProviderWizard: React.FC = () => {
                 );
               })}
             </div>
+          </section>
+
+          {/* 支援の細目（行動障害・医療的ケア・てんかん発作・コミュニケーション・送迎） */}
+          <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
+            <h2 className="text-xl font-bold text-slate-900">
+              3. 支援の細目（受入条件カード詳細）
+            </h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="prov-behavior-policy"
+                  className="block text-sm font-bold text-slate-900"
+                >
+                  行動障害への対応
+                </label>
+                <select
+                  id="prov-behavior-policy"
+                  value={capabilities.supportsBehavioralDisorder}
+                  onChange={(e) =>
+                    setCapabilities({
+                      ...capabilities,
+                      supportsBehavioralDisorder: e.target
+                        .value as SupportDetailPolicy,
+                    })
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                >
+                  {SUPPORT_POLICIES.map((pol) => (
+                    <option key={pol} value={pol}>
+                      {pol}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="prov-medical-policy"
+                  className="block text-sm font-bold text-slate-900"
+                >
+                  医療的ケアへの対応
+                </label>
+                <select
+                  id="prov-medical-policy"
+                  value={capabilities.supportsMedicalCare}
+                  onChange={(e) =>
+                    setCapabilities({
+                      ...capabilities,
+                      supportsMedicalCare: e.target.value as SupportDetailPolicy,
+                    })
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                >
+                  {SUPPORT_POLICIES.map((pol) => (
+                    <option key={pol} value={pol}>
+                      {pol}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="prov-epilepsy-policy"
+                  className="block text-sm font-bold text-slate-900"
+                >
+                  てんかん発作時の対応
+                </label>
+                <select
+                  id="prov-epilepsy-policy"
+                  value={capabilities.supportsEpilepsyResponse}
+                  onChange={(e) =>
+                    setCapabilities({
+                      ...capabilities,
+                      supportsEpilepsyResponse: e.target
+                        .value as SupportDetailPolicy,
+                    })
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                >
+                  {SUPPORT_POLICIES.map((pol) => (
+                    <option key={pol} value={pol}>
+                      {pol}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="block text-sm font-bold text-slate-900">
+                対応できるコミュニケーション手段（複数選択可）
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {SUPPORTED_COMMUNICATION_METHODS.map((method) => {
+                  const selected =
+                    capabilities.supportedCommunicationMethods.includes(method);
+                  return (
+                    <button
+                      key={method}
+                      type="button"
+                      onClick={() =>
+                        setCapabilities({
+                          ...capabilities,
+                          supportedCommunicationMethods: toggleItem<string>(
+                            capabilities.supportedCommunicationMethods,
+                            method
+                          ),
+                        })
+                      }
+                      aria-pressed={selected}
+                      className={`min-h-[46px] px-3.5 py-2 rounded-xl border-2 text-left text-xs sm:text-sm font-bold flex items-center justify-between gap-2 cursor-pointer ${
+                        selected
+                          ? 'bg-teal-50 border-teal-700 text-teal-950'
+                          : 'bg-white border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      <span>{method}</span>
+                      {selected && <Check className="w-4 h-4 text-teal-800 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+              <div className="space-y-2">
+                <span className="block text-sm font-bold text-slate-900">
+                  送迎の可否
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCapabilities({
+                      ...capabilities,
+                      supportsTransport: !capabilities.supportsTransport,
+                    })
+                  }
+                  aria-pressed={capabilities.supportsTransport}
+                  className={`w-full min-h-[46px] px-4 py-2 rounded-xl border-2 text-sm font-bold flex items-center justify-between gap-2 cursor-pointer ${
+                    capabilities.supportsTransport
+                      ? 'bg-teal-50 border-teal-700 text-teal-950'
+                      : 'bg-white border-slate-300 text-slate-700'
+                  }`}
+                >
+                  <span>
+                    {capabilities.supportsTransport
+                      ? '送迎あり（可）'
+                      : '送迎なし（訪問のみ）'}
+                  </span>
+                  {capabilities.supportsTransport && (
+                    <Check className="w-4 h-4 text-teal-800" />
+                  )}
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="prov-transport-range"
+                  className="block text-sm font-bold text-slate-900"
+                >
+                  送迎範囲（送迎ありの場合）
+                </label>
+                <input
+                  id="prov-transport-range"
+                  type="text"
+                  value={capabilities.transportRangeText}
+                  onChange={(e) =>
+                    setCapabilities({
+                      ...capabilities,
+                      transportRangeText: e.target.value,
+                    })
+                  }
+                  placeholder="例：杉並区・中野区周辺（片道20分圏内）"
+                  className="w-full min-h-[46px] px-3 py-2 rounded-xl border border-slate-300 text-sm text-slate-900"
+                />
+              </div>
+            </div>
 
             <div className="space-y-2 pt-2">
               <label
                 htmlFor="prov-medical-range"
-                className="block text-base font-bold text-slate-900"
+                className="block text-sm font-bold text-slate-900"
               >
-                医療的な配慮が必要な方の対応範囲（自由記述）
+                医療的ケアの具体的な対応範囲
               </label>
               <textarea
                 id="prov-medical-range"
-                rows={3}
+                rows={2}
                 value={capabilities.medicalCareRangeText}
                 onChange={(e) =>
                   setCapabilities({
@@ -690,8 +883,8 @@ export const ProviderWizard: React.FC = () => {
                     medicalCareRangeText: e.target.value,
                   })
                 }
-                placeholder="例：喀痰吸引・経管栄養の登録特定行為事業者です。服薬確認・見守り、ストーマケア補助に対応可能です。"
-                className="w-full p-3.5 rounded-xl border border-slate-300 text-base text-slate-900"
+                placeholder="例：喀痰吸引・経管栄養の登録特定行為事業者です。服薬確認・見守りに対応可能です。"
+                className="w-full p-3 rounded-xl border border-slate-300 text-sm text-slate-900"
               />
             </div>
           </section>
@@ -737,7 +930,7 @@ export const ProviderWizard: React.FC = () => {
 
             <div className="space-y-2 pt-2">
               <span className="block text-base font-bold text-slate-900">
-                現在派遣・配置可能なヘルパーの性別（両方選択可）
+                在籍・配置可能なヘルパーの性別（両方選択可）
               </span>
               <div className="grid grid-cols-2 gap-3">
                 {(['女性', '男性'] as const).map((g) => {
@@ -764,7 +957,7 @@ export const ProviderWizard: React.FC = () => {
                       }`}
                     >
                       {selected && <Check className="w-4 h-4 text-teal-800" />}
-                      <span>{g}ヘルパー対応可</span>
+                      <span>{g}ヘルパー在籍</span>
                     </button>
                   );
                 })}
@@ -772,14 +965,13 @@ export const ProviderWizard: React.FC = () => {
             </div>
           </section>
 
-          {/* 曜日ごとの対応可能な時間帯設定（仕様書6-1） */}
           <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
             <div className="space-y-1">
               <h2 className="text-xl font-bold text-slate-900">
-                2. 曜日ごとの対応可能な時間帯の設定
+                2. 対応できる曜日・時間帯
               </h2>
               <p className="text-sm text-slate-600">
-                例：「月曜日：9時〜12時、13時〜17時」「火曜日：対応不可」「土曜日：10時〜15時」のように曜日ごとに設定できます。
+                「空きあり」ではなく「対応できる曜日・時間帯」として利用希望者に提示されます。
               </p>
             </div>
 
@@ -852,7 +1044,7 @@ export const ProviderWizard: React.FC = () => {
                           htmlFor={`day-note-${dayRow.day}`}
                           className="block text-xs font-bold text-slate-600 mb-1"
                         >
-                          具体的な対応時間メモ（例：9時〜12時、13時〜17時）
+                          具体的な対応時間帯メモ（例：9時〜12時、13時〜17時）
                         </label>
                         <input
                           id={`day-note-${dayRow.day}`}
@@ -885,7 +1077,7 @@ export const ProviderWizard: React.FC = () => {
             className="min-h-[50px] px-5 py-3 rounded-xl border-2 border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-bold text-base flex items-center justify-center gap-2 shrink-0 cursor-pointer"
           >
             <ArrowLeft className="w-5 h-5" aria-hidden="true" />
-            {providerWizardStep === 1 ? 'ホームへ戻る' : '前へ戻る'}
+            {providerWizardStep === 1 ? 'マイページへ戻る' : '前へ戻る'}
           </button>
 
           {providerWizardStep < 3 ? (
@@ -894,7 +1086,7 @@ export const ProviderWizard: React.FC = () => {
               onClick={handleNext}
               className="flex-1 min-h-[50px] px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-base flex items-center justify-center gap-2 shadow-sm cursor-pointer"
             >
-              <span>次へ進む（ステップ {providerWizardStep + 1} へ）</span>
+              <span>次へ進む（{providerWizardStep + 1} 番目へ）</span>
               <ArrowRight className="w-5 h-5" aria-hidden="true" />
             </button>
           ) : (
@@ -904,7 +1096,7 @@ export const ProviderWizard: React.FC = () => {
               className="flex-1 min-h-[50px] px-6 py-3 rounded-xl bg-teal-800 hover:bg-teal-900 text-white font-bold text-base flex items-center justify-center gap-2 shadow-sm cursor-pointer"
             >
               <Check className="w-5 h-5" aria-hidden="true" />
-              <span>保存して利用希望者一覧を見る</span>
+              <span>受入条件カードを保存してマイページへ</span>
             </button>
           )}
         </div>

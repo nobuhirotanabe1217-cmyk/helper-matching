@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   User,
   FileEdit,
@@ -12,9 +12,18 @@ import {
   Bookmark,
   Plus,
   StickyNote,
+  Share2,
+  Copy,
+  UsersRound,
+  AlertTriangle,
+  Clock,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
-import { calculateMatchResult } from '../utils/matching';
+import {
+  calculateMatchResult,
+  compareProvidersForUserSearch,
+} from '../utils/matching';
+import { formatJapaneseDate } from '../utils/date';
 import {
   getFavoriteInteractionsForUser,
   isProviderFavorited,
@@ -46,14 +55,27 @@ export const UserDashboard: React.FC = () => {
     interactions,
     disclosures,
     chatRequests,
+    coordinators,
+    sharedCases,
     respondToChatRequest,
     toggleUserFavoriteProvider,
+    shareUserWithCoordinator,
+    startAsCoordinatorDemo,
     navigateTo,
     openProviderDetail,
     openChatWith,
     setUserWizardStep,
     openRegistrationScreen,
   } = useAppState();
+
+  const [showFamilyShareBox, setShowFamilyShareBox] = useState(false);
+  const [familyCopied, setFamilyCopied] = useState(false);
+  const [showCoordShareBox, setShowCoordShareBox] = useState(false);
+  const [selectedCoordId, setSelectedCoordId] = useState<string>(
+    coordinators[0]?.id || ''
+  );
+  const [coordNote, setCoordNote] = useState('');
+  const [coordSharedMsg, setCoordSharedMsg] = useState('');
 
   // 万一まだ利用者が0名の場合は新規登録へ案内
   if (userProfiles.length === 0) {
@@ -92,12 +114,10 @@ export const UserDashboard: React.FC = () => {
       const pBundle = getProviderBundleById(p.id);
       if (!pBundle) return null;
       const result = calculateMatchResult(currentUserBundle, pBundle);
-      return { provider: pBundle, result };
+      return { provider: pBundle, result, match: result };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
-    .sort(
-      (a, b) => b.result.breakdown.totalScore - a.result.breakdown.totalScore
-    );
+    .sort((a, b) => compareProvidersForUserSearch(a, b, false));
 
   const highMatchCount = matchedProviders.filter(
     (m) => m.result.breakdown.totalScore >= 80
@@ -210,8 +230,8 @@ export const UserDashboard: React.FC = () => {
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
       {/* 1. 利用者マイページ：登録条件 ＆ マッチング進捗バー・グラフ */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <div>
+        <div className="flex flex-col gap-3.5 border-b border-slate-100 pb-4">
+          <div className="min-w-0">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-teal-900 text-white text-xs font-bold">
               <User className="w-3.5 h-3.5" aria-hidden="true" />
               <span>利用者マイページ（完全無料）</span>
@@ -232,7 +252,7 @@ export const UserDashboard: React.FC = () => {
                 aria-label="登録した利用者を切替"
                 value={activeUserId}
                 onChange={(e) => setActiveUserId(e.target.value)}
-                className="min-h-[38px] px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-900"
+                className="min-h-[38px] max-w-full sm:max-w-[240px] px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-900 truncate"
               >
                 {userProfiles.map((u) => (
                   <option key={u.id} value={u.id}>
@@ -307,6 +327,251 @@ export const UserDashboard: React.FC = () => {
           activeProviders={activeProviderProgressItems}
           onOpenFavorites={() => navigateTo('user-favorites')}
         />
+      </section>
+
+      {/* 1.5 自分の特性プロフィール＆家族・相談支援専門員への共有 */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">
+              あなたの特性プロフィール（ご家族・相談支援専門員と共有できます）
+            </h2>
+            <p className="text-xs text-slate-600 mt-0.5">
+              障害種別や配慮してほしいことをまとめておき、ご家族や担当の相談支援専門員と一緒に事業所を検討できます。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="share-family-btn"
+              onClick={() => setShowFamilyShareBox(!showFamilyShareBox)}
+              className="min-h-[38px] px-3 py-1.5 rounded-xl border border-teal-700 bg-teal-50 hover:bg-teal-100 text-teal-950 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <Share2 className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>家族と共有する</span>
+            </button>
+            <button
+              type="button"
+              data-testid="share-coordinator-btn"
+              onClick={() => setShowCoordShareBox(!showCoordShareBox)}
+              className="min-h-[38px] px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <UsersRound className="w-3.5 h-3.5 text-teal-800" aria-hidden="true" />
+              <span>相談支援専門員に共有する</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <span className="font-bold text-slate-500 block">障害種別</span>
+            <p className="font-bold text-slate-900">
+              {needs.disabilityTypes.length > 0
+                ? needs.disabilityTypes.join('・')
+                : '未選択'}
+            </p>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <span className="font-bold text-slate-500 block">
+              コミュニケーションの方法
+            </span>
+            <p className="font-medium text-slate-800">
+              {needs.communicationConsiderations.length > 0
+                ? needs.communicationConsiderations.join('・')
+                : '未設定'}
+            </p>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-slate-500">
+                苦手なこと・配慮してほしいこと
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setUserWizardStep(3);
+                  navigateTo('user-wizard');
+                }}
+                className="text-[11px] font-bold text-teal-800 underline cursor-pointer"
+              >
+                編集
+              </button>
+            </div>
+            <p className="font-medium text-slate-800">
+              {needs.dislikesAndAccommodations ||
+                needs.communicationFreeText ||
+                'まだ記入されていません'}
+            </p>
+          </div>
+        </div>
+
+        {/* 家族共有モーダル／パネル */}
+        {showFamilyShareBox && (
+          <div
+            data-testid="family-share-panel"
+            className="p-4 rounded-xl bg-teal-50/70 border border-teal-300 space-y-2.5 text-xs"
+          >
+            <p className="font-bold text-teal-950">
+              ご家族と検討するための共有用リンク（氏名・電話番号は含まれません）
+            </p>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                aria-label="家族共有リンク"
+                value={`${
+                  typeof window !== 'undefined' ? window.location.origin : ''
+                }/?familyShare=${profile.familyShareToken || profile.id}`}
+                className="flex-1 min-h-[38px] px-3 py-1.5 rounded-lg border border-teal-200 bg-white font-mono text-slate-800"
+              />
+              <button
+                type="button"
+                data-testid="copy-family-share-btn"
+                onClick={() => {
+                  const url = `${
+                    typeof window !== 'undefined' ? window.location.origin : ''
+                  }/?familyShare=${profile.familyShareToken || profile.id}`;
+                  if (navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(url).catch(() => {});
+                  }
+                  setFamilyCopied(true);
+                  setTimeout(() => setFamilyCopied(false), 3000);
+                }}
+                className="min-h-[38px] px-4 py-1.5 rounded-lg bg-teal-800 hover:bg-teal-900 text-white font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                {familyCopied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>コピーしました</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>リンクをコピー</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 相談支援専門員への共有パネル */}
+        {showCoordShareBox && (
+          <div
+            data-testid="coordinator-share-panel"
+            className="p-4 rounded-xl bg-slate-50 border border-slate-300 space-y-3 text-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-bold text-slate-900">
+                相談支援専門員に希望条件と特性プロフィールを共有する
+              </p>
+              {coordinators.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    startAsCoordinatorDemo(selectedCoordId || coordinators[0].id)
+                  }
+                  className="text-xs font-bold text-teal-800 underline cursor-pointer"
+                >
+                  相談支援専門員画面で確認する →
+                </button>
+              )}
+            </div>
+
+            {coordinators.length === 0 ? (
+              <p className="text-slate-600">
+                現在登録されている相談支援専門員がいません。トップ画面から無料で簡易登録できます。
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label
+                      htmlFor="coord-select"
+                      className="block font-bold text-slate-700 mb-1"
+                    >
+                      共有先の相談支援専門員
+                    </label>
+                    <select
+                      id="coord-select"
+                      value={selectedCoordId || coordinators[0]?.id || ''}
+                      onChange={(e) => setSelectedCoordId(e.target.value)}
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      {coordinators.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.officeName} / {c.name}（{c.area}）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="coord-note"
+                      className="block font-bold text-slate-700 mb-1"
+                    >
+                      専門員への相談メモ（任意）
+                    </label>
+                    <input
+                      id="coord-note"
+                      type="text"
+                      value={coordNote}
+                      onChange={(e) => setCoordNote(e.target.value)}
+                      placeholder="例：土曜に外出支援ができる事業所を一緒に探したいです"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="confirm-share-coordinator-btn"
+                    onClick={() => {
+                      const targetCoordId =
+                        selectedCoordId || coordinators[0].id;
+                      shareUserWithCoordinator(
+                        activeUserId,
+                        targetCoordId,
+                        coordNote
+                      );
+                      const target = coordinators.find(
+                        (c) => c.id === targetCoordId
+                      );
+                      setCoordSharedMsg(
+                        `${target?.officeName || ''}（${
+                          target?.name || ''
+                        }）に共有しました。`
+                      );
+                    }}
+                    className="min-h-[38px] px-4 py-1.5 rounded-lg bg-teal-800 hover:bg-teal-900 text-white font-bold cursor-pointer"
+                  >
+                    この内容で相談支援専門員に共有する
+                  </button>
+                  {coordSharedMsg && (
+                    <span className="text-emerald-800 font-bold">
+                      {coordSharedMsg}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {sharedCases.some((sc) => sc.userId === activeUserId) && (
+              <p className="text-[11px] text-slate-600 pt-1">
+                現在共有中の相談支援専門員：
+                {sharedCases
+                  .filter((sc) => sc.userId === activeUserId)
+                  .map((sc) => {
+                    const c = coordinators.find(
+                      (item) => item.id === sc.coordinatorId
+                    );
+                    return c ? `${c.officeName}（${c.name}）` : sc.coordinatorId;
+                  })
+                  .join('・')}
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       {/* 2. 事業所から届いたチャット申請（承認待ちがある場合のみ表示） */}
@@ -522,13 +787,15 @@ export const UserDashboard: React.FC = () => {
                 activeUserId,
                 provider.profile.id
               );
+              const updatedAt =
+                provider.profile.updatedAt || provider.availability.updatedAt;
 
               return (
                 <div
                   key={provider.profile.id}
                   className="border border-slate-200 rounded-2xl p-4 flex flex-col justify-between gap-3 bg-slate-50/50"
                 >
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <span className="text-[11px] font-semibold text-teal-800 block">
@@ -538,6 +805,18 @@ export const UserDashboard: React.FC = () => {
                         <h3 className="text-base font-bold text-slate-900 truncate mt-0.5">
                           {provider.profile.name}
                         </h3>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] text-slate-600">
+                          <span className="inline-flex items-center gap-1 tabular-nums">
+                            <Clock className="w-3 h-3 text-slate-400" aria-hidden="true" />
+                            最終更新：{formatJapaneseDate(updatedAt)}
+                          </span>
+                          {result.isStaleProvider && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-950 font-bold">
+                              <AlertTriangle className="w-3 h-3 text-amber-700" aria-hidden="true" />
+                              情報が古い可能性
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <MatchScoreRing
                         score={result.breakdown.totalScore}
@@ -545,6 +824,12 @@ export const UserDashboard: React.FC = () => {
                         size="sm"
                       />
                     </div>
+
+                    {provider.profile.appealMessage && (
+                      <p className="text-xs text-teal-950 bg-teal-50/70 border border-teal-200 rounded-lg px-2.5 py-1.5 font-medium">
+                        「{provider.profile.appealMessage}」
+                      </p>
+                    )}
 
                     <CareNeedsIconGrid
                       items={needs.careNeeds}

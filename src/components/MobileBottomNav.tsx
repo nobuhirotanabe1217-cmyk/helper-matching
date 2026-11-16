@@ -18,11 +18,13 @@ export const MobileBottomNav: React.FC = () => {
   if (
     role === 'guest' ||
     role === 'admin' ||
+    role === 'coordinator' ||
     currentView === 'top' ||
     currentView === 'login' ||
     currentView === 'register' ||
     currentView === 'registration-complete' ||
     currentView === 'admin-security' ||
+    currentView === 'coordinator-dashboard' ||
     currentView === 'user-wizard' ||
     currentView === 'provider-wizard'
   ) {
@@ -124,7 +126,7 @@ export const MobileBottomNav: React.FC = () => {
     },
     {
       id: 'provider-wizard' as const,
-      label: '条件・空き枠',
+      label: '受入条件',
       icon: FileEdit,
       active: false,
     },

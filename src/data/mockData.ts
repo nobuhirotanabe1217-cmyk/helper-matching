@@ -1,18 +1,29 @@
 import {
+  AccountCredential,
   AuditLogEntry,
   ChatMessage,
   ChatRequest,
+  CoordinatorProfile,
   DisclosureConsent,
+  DisclosureHistoryEntry,
   MatchingInteraction,
   ProviderAvailability,
   ProviderCapabilities,
   ProviderProfile,
   ProviderSubscription,
+  SharedCaseToCoordinator,
   UserPII,
   UserPreferences,
   UserProfile,
   UserSupportNeeds,
 } from '../types/domain';
+import { addDaysToIso, addMonthsToIso, getTodayIso } from '../utils/date';
+
+const TODAY = getTodayIso();
+const RECENT_DATE_2 = addDaysToIso(TODAY, -2);
+const RECENT_DATE_4 = addDaysToIso(TODAY, -4);
+const RECENT_DATE_8 = addDaysToIso(TODAY, -8);
+const STALE_DATE_35 = addDaysToIso(TODAY, -35);
 
 /**
  * 領域 A: 本人特定情報 (PII) - 独立保管データ
@@ -29,7 +40,7 @@ export const INITIAL_USER_PII: UserPII[] = [
     detailedAddress: '東京都杉並区荻窪5丁目99-1 メゾン荻窪201号室',
     emergencyContactName: '佐々木 和子（母）',
     emergencyContactPhone: '090-0000-0002',
-    updatedAt: '2026-11-05 10:00',
+    updatedAt: `${RECENT_DATE_4} 10:00`,
   },
   {
     userId: 'user-002',
@@ -41,7 +52,7 @@ export const INITIAL_USER_PII: UserPII[] = [
     detailedAddress: '東京都中野区中央4丁目88-2 新中野レジデンス405号室',
     emergencyContactName: '高橋 浩（父）',
     emergencyContactPhone: '090-0000-0004',
-    updatedAt: '2026-11-06 09:30',
+    updatedAt: `${RECENT_DATE_2} 09:30`,
   },
   {
     userId: 'user-003',
@@ -53,7 +64,7 @@ export const INITIAL_USER_PII: UserPII[] = [
     detailedAddress: '東京都世田谷区経堂2丁目77-3',
     emergencyContactName: '鈴木 正雄（父）',
     emergencyContactPhone: '090-0000-0006',
-    updatedAt: '2026-11-04 14:00',
+    updatedAt: `${RECENT_DATE_8} 14:00`,
   },
   {
     userId: 'user-004',
@@ -65,7 +76,7 @@ export const INITIAL_USER_PII: UserPII[] = [
     detailedAddress: '東京都杉並区久我山3丁目66-4 パークサイド久我山102号室',
     emergencyContactName: '田中 茂（夫）',
     emergencyContactPhone: '090-0000-0008',
-    updatedAt: '2026-11-05 11:20',
+    updatedAt: `${RECENT_DATE_4} 11:20`,
   },
   {
     userId: 'user-005',
@@ -77,67 +88,7 @@ export const INITIAL_USER_PII: UserPII[] = [
     detailedAddress: '東京都練馬区練馬1丁目55-5 コーポ練馬303号室',
     emergencyContactName: '指定相談支援事業所ひまわり（田中相談員）',
     emergencyContactPhone: '03-0000-0001',
-    updatedAt: '2026-11-06 13:45',
-  },
-];
-
-/**
- * 初期監査ログデータ (監査・セキュリティ監視用)
- */
-export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
-  {
-    id: 'log-001',
-    timestamp: '2026-11-06 09:00:12',
-    actorId: 'admin-001',
-    actorRole: 'admin',
-    action: 'AUTH_LOGIN',
-    ipAddress: '192.168.1.1',
-    detail: '運営管理者によるセキュア認証成功（MFA検証済）',
-    isSecurityAlert: false,
-  },
-  {
-    id: 'log-002',
-    timestamp: '2026-11-06 09:15:30',
-    actorId: 'user-001',
-    actorRole: 'user',
-    action: 'DATA_UPDATE_NEEDS',
-    targetId: 'user-001',
-    ipAddress: '192.168.1.10',
-    detail: '支援ニーズ情報の自己更新（移動支援・車いす介助等）',
-    isSecurityAlert: false,
-  },
-  {
-    id: 'log-003',
-    timestamp: '2026-11-06 09:45:10',
-    actorId: 'prov-001',
-    actorRole: 'provider',
-    action: 'DATA_VIEW_MATCHING',
-    targetId: 'user-001',
-    ipAddress: '192.168.1.50',
-    detail: '事業所による匿名マッチング候補一覧の閲覧（PII非開示）',
-    isSecurityAlert: false,
-  },
-  {
-    id: 'log-004',
-    timestamp: '2026-11-06 10:15:22',
-    actorId: 'prov-003',
-    actorRole: 'provider',
-    action: 'DATA_VIEW_PII',
-    targetId: 'user-002',
-    ipAddress: '192.168.1.88',
-    detail: '【アクセス拒否ブロック】第3段階同意未完了ユーザーの本人特定情報への要求を検知・遮断',
-    isSecurityAlert: true,
-  },
-  {
-    id: 'log-005',
-    timestamp: '2026-11-06 11:20:05',
-    actorId: 'user-004',
-    actorRole: 'user',
-    action: 'CONSENT_GRANTED',
-    targetId: 'prov-004',
-    ipAddress: '192.168.1.12',
-    detail: '特定事業所（prov-004）への第3段階詳細情報開示に利用者が明示同意',
-    isSecurityAlert: false,
+    updatedAt: `${RECENT_DATE_2} 13:45`,
   },
 ];
 
@@ -151,10 +102,12 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     city: '杉並区',
     registrantRole: '家族',
     certificateStatus: '受給者証を持っている',
-    registeredAt: '2026年11月（新着）',
+    registeredAt: '新着',
     isNewArrival: true,
     briefSummaryForFreePlan:
-      '車いすでの外出支援および同性（女性）ヘルパーによる排泄介助・入浴見守りを希望',
+      '車いすでの土曜午後外出（移動支援）および女性ヘルパーによる排泄・入浴サポート希望',
+    familyShareToken: 'fam_sakura_001',
+    sharedCoordinatorIds: ['coord-001'],
     disclosableInfo: {
       contactPersonRole: '母（主介護者・同居）',
       nearestStationArea: 'JR中央線 荻窪駅北口より徒歩8分',
@@ -172,16 +125,18 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     city: '中野区',
     registrantRole: '本人',
     certificateStatus: '受給者証を持っている',
-    registeredAt: '2026年11月（新着）',
+    registeredAt: '新着',
     isNewArrival: true,
     briefSummaryForFreePlan:
-      '平日日中の身体介護・ベッドから車いすへの移乗介助および日常生活全般の見守りを希望',
+      '平日日中の身体介護・移乗介助および長時間見守り（重度訪問介護・居宅介護）希望',
+    familyShareToken: 'fam_kenji_002',
+    sharedCoordinatorIds: [],
     disclosableInfo: {
       contactPersonRole: '本人（一人暮らし）',
       nearestStationArea: '東京メトロ丸ノ内線 新中野駅より徒歩5分',
       preferredContactMethod: 'サイト内メッセージ（終日確認可能）',
       consultationSupportOffice: '中野区障害者相談支援センター みなみ（担当：高橋）',
-      detailedScheduleNote: '月・水・金の午前〜午後にかけて居宅介護・重度訪問介護での身体介助と移乗サポートを希望',
+      detailedScheduleNote: '月・水・金の午前〜午後にかけて重度訪問介護と移乗サポートを希望',
     },
   },
   {
@@ -193,16 +148,18 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     city: '練馬区',
     registrantRole: '家族',
     certificateStatus: '支給決定済みだが利用開始前',
-    registeredAt: '2026年10月',
+    registeredAt: '今月登録',
     isNewArrival: false,
     briefSummaryForFreePlan:
-      '土日午後の外出時の見守り・移動時の支援（事前に予定の見通し共有があると安心）',
+      '土日午後の余暇外出（移動支援）。事前のスケジュール写真共有があると安心できます',
+    familyShareToken: 'fam_aoi_003',
+    sharedCoordinatorIds: ['coord-001'],
     disclosableInfo: {
       contactPersonRole: '父・母（同居家族）',
       nearestStationArea: '西武新宿線 上石神井駅より徒歩10分',
       preferredContactMethod: 'サイト内メッセージ（19時以降または土日）',
       consultationSupportOffice: '練馬区相談支援事業所 けやき（担当：鈴木）',
-      detailedScheduleNote: '第1・第3土曜日の午前〜午後、電車やバスを使った外出の移動支援を希望',
+      detailedScheduleNote: '土曜の午前〜午後、電車やバスを使った外出の移動支援を希望',
     },
   },
   {
@@ -214,16 +171,18 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     city: '杉並区',
     registrantRole: '本人',
     certificateStatus: '受給者証を持っている',
-    registeredAt: '2026年10月',
+    registeredAt: '今月登録',
     isNewArrival: false,
     briefSummaryForFreePlan:
-      '平日午前の通院・買い物時の同行援護（視覚的情報の案内・声かけ）および調理支援を希望',
+      '火曜・木曜午前の通院・買い物同行援護（代読代筆含む）および自宅の調理援助を希望',
+    familyShareToken: 'fam_midori_004',
+    sharedCoordinatorIds: [],
     disclosableInfo: {
       contactPersonRole: '本人（夫と同居）',
       nearestStationArea: '京王井の頭線 久我山駅より徒歩6分',
-      preferredContactMethod: 'サイト内メッセージ（音声読み上げソフト使用中）',
-      consultationSupportOffice: 'セルフプラン（相談支援専門員も紹介希望）',
-      detailedScheduleNote: '火曜・木曜の午前に眼科・内科への通院同行および買い物の同行援護（代読・代筆含む）を希望',
+      preferredContactMethod: 'サイト内メッセージ（音声読み上げ利用中）',
+      consultationSupportOffice: 'セルフプラン（相談支援専門員も希望）',
+      detailedScheduleNote: '火曜・木曜の午前に眼科・内科への通院同行および買い物の同行援護を希望',
     },
   },
   {
@@ -235,16 +194,18 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     city: '練馬区',
     registrantRole: '支援者',
     certificateStatus: '現在申請中',
-    registeredAt: '2026年11月（新着）',
+    registeredAt: '新着',
     isNewArrival: true,
     briefSummaryForFreePlan:
-      '平日午後の家事援助（調理・掃除・洗濯）および穏やかなコミュニケーション配慮を希望',
+      '水曜・金曜午後の家事援助（調理・掃除・洗濯）および穏やかな声かけ配慮を希望',
+    familyShareToken: 'fam_hinata_005',
+    sharedCoordinatorIds: ['coord-001'],
     disclosableInfo: {
       contactPersonRole: '担当相談支援専門員（本人同意のもと代理調整）',
       nearestStationArea: '西武池袋線 練馬駅より徒歩10分',
       preferredContactMethod: 'サイト内メッセージ（平日9時〜17時）',
       consultationSupportOffice: '練馬区指定特定相談支援事業所 ひまわり（担当：田中）',
-      detailedScheduleNote: '水曜・金曜の午後（14時〜16時）、体調に合わせた調理・掃除・洗濯の家事援助と買い物の付き添いを希望',
+      detailedScheduleNote: '水曜・金曜の午後（14時〜16時）、体調に合わせた調理・掃除・洗濯を希望',
     },
   },
 ];
@@ -254,7 +215,7 @@ export const INITIAL_USER_NEEDS: UserSupportNeeds[] = [
     userId: 'user-001',
     desiredServices: ['移動支援', '居宅介護'],
     serviceNotes: {
-      移動支援: '週末の気分転換の外出や買い物時の車いす介助をお願いしたいです',
+      移動支援: '土曜午後の買い物・公園散策時の車いす介助をお願いしたいです',
       居宅介護: '平日の入浴介助も可能な事業所であれば合わせて相談したいです',
     },
     disabilityTypes: ['身体障害'],
@@ -268,16 +229,17 @@ export const INITIAL_USER_NEEDS: UserSupportNeeds[] = [
     ],
     essentialCareNeeds: ['車いすの操作・介助', '外出時の付き添い', '排泄の介助'],
     physicalConditions: ['車いすを使用', '身体介助が中心'],
-    communicationConsiderations: ['言葉でのコミュニケーションが可能', '特に配慮事項なし'],
+    communicationConsiderations: ['言葉でのコミュニケーションが可能'],
     communicationFreeText: '明るい会話が好きです。外出先の多目的トイレでの排泄介助が必要です。',
+    dislikesAndAccommodations: '段差の振動に弱いため、急な方向転換を避けて声かけをしてから押していただけると安心です。',
   },
   {
     userId: 'user-002',
     desiredServices: ['重度訪問介護', '居宅介護'],
     serviceNotes: {
-      重度訪問介護: '自宅での生活全般（移乗・排泄・食事・PC作業準備）と月数回の外出同行',
+      重度訪問介護: '自宅での生活全般（移乗・排泄・食事）と月数回の外出同行',
     },
-    disabilityTypes: ['身体障害'],
+    disabilityTypes: ['身体障害', '難病'],
     supportCategory: '区分6',
     careNeeds: [
       '移乗の介助',
@@ -296,15 +258,16 @@ export const INITIAL_USER_NEEDS: UserSupportNeeds[] = [
     ],
     communicationConsiderations: ['言葉でのコミュニケーションが可能'],
     communicationFreeText:
-      '頸髄損傷のためベッドから車いすへの移乗介助（スライディングボード使用）が必要です。手順は丁寧にお伝えできます。',
+      'スライディングボードを使った移乗介助が必要です。手順は丁寧にお伝えできます。',
+    dislikesAndAccommodations: '温度調整（夏場の室温・冬場の換気）に配慮が必要です。移乗前の「せーの」の声かけをお願いします。',
   },
   {
     userId: 'user-003',
     desiredServices: ['移動支援'],
     serviceNotes: {
-      移動支援: '休日の余暇外出（電車を見に行く、公園散策など）の付き添い',
+      移動支援: '休日の余暇外出（電車や公園散策）の付き添い',
     },
-    disabilityTypes: ['知的障害'],
+    disabilityTypes: ['知的障害', '発達障害'],
     supportCategory: '区分3',
     careNeeds: ['外出時の付き添い', '歩行の見守り・介助', '買い物の付き添い'],
     essentialCareNeeds: ['外出時の付き添い'],
@@ -317,13 +280,14 @@ export const INITIAL_USER_NEEDS: UserSupportNeeds[] = [
       'パニック時の対応が必要',
     ],
     communicationFreeText:
-      '急な予定変更が苦手なため、外出前に行く場所を写真やメモで見せていただくと落ち着いて行動できます。',
+      '急な予定変更が苦手なため、外出前に行く場所を写真や絵カードで見せていただくと落ち着いて行動できます。',
+    dislikesAndAccommodations: '混雑した商業施設や大きなサイレン音が苦手です。静かな場所で5分休める休憩スポットを事前に決めておくと安心できます。',
   },
   {
     userId: 'user-004',
     desiredServices: ['同行援護', '居宅介護'],
     serviceNotes: {
-      同行援護: '医療機関への通院同行、役所手続きや買い物時の代読・代筆',
+      同行援護: '医療機関への通院同行、買い物時の代読・代筆',
       居宅介護: '自宅での調理や掃除の一部サポート',
     },
     disabilityTypes: ['視覚障害'],
@@ -337,9 +301,10 @@ export const INITIAL_USER_NEEDS: UserSupportNeeds[] = [
     ],
     essentialCareNeeds: ['通院時の付き添い', '買い物の付き添い'],
     physicalConditions: ['自立歩行が可能', '杖を使用', '見守りが中心'],
-    communicationConsiderations: ['言葉でのコミュニケーションが可能', '特に配慮事項なし'],
+    communicationConsiderations: ['言葉でのコミュニケーションが可能'],
     communicationFreeText:
       '白杖を使用しています。段差や階段の声かけ、買い物の際の賞味期限や値段の読み上げをお願いしたいです。',
+    dislikesAndAccommodations: '急に腕を強く引っ張られるとバランスを崩しやすいため、肘や肩を軽く支える誘導でお願いします。',
   },
   {
     userId: 'user-005',
@@ -358,6 +323,7 @@ export const INITIAL_USER_NEEDS: UserSupportNeeds[] = [
     ],
     communicationFreeText:
       '初対面では緊張しやすいため、穏やかにゆっくりお話しいただける女性ヘルパーさんだと安心できます。',
+    dislikesAndAccommodations: '強い洗剤の匂いや大きな物音が苦手です。訪問時はインターホン後ゆっくり入室していただけると助かります。',
   },
 ];
 
@@ -371,9 +337,9 @@ export const INITIAL_USER_PREFERENCES: UserPreferences[] = [
     frequency: '週1〜2回',
     startTiming: '1〜2か月以内',
     preferredAreas: ['杉並区', '中野区'],
-    otherRequests: '外出先での排泄介助があるため、同性（女性）のヘルパーさんを必須で希望しています。',
+    otherRequests: '外出先での排泄介助があるため、同性（女性）のヘルパーさんを希望しています。',
     freeMessageToProvider:
-      '外出時は車いすを使用します。女性ヘルパーを希望しています。土曜日または日曜日の午後に利用したいです。',
+      '外出時は車いすを使用します。土曜・日曜の午後に女性ヘルパーさんと楽しく外出したいです。',
   },
   {
     userId: 'user-002',
@@ -384,7 +350,7 @@ export const INITIAL_USER_PREFERENCES: UserPreferences[] = [
     frequency: '週3〜5回',
     startTiming: 'できるだけ早く（1か月以内）',
     preferredAreas: ['中野区', '杉並区', '新宿区'],
-    otherRequests: 'ベッドからの移乗介助に慣れている方を希望します（同性だとより安心ですが男女問わず相談可能です）。',
+    otherRequests: 'ベッドからの移乗介助に慣れている方を希望します（男女問わず相談可）。',
     freeMessageToProvider:
       '月・水・金の日中に重度訪問介護または居宅介護を探しています。移乗介助の経験がある事業所様と相談したいです。',
   },
@@ -397,9 +363,9 @@ export const INITIAL_USER_PREFERENCES: UserPreferences[] = [
     frequency: '月数回・不定期',
     startTiming: '1〜2か月以内',
     preferredAreas: ['世田谷区', '杉並区'],
-    otherRequests: '知的障害・自閉スペクトラム症の外出支援に慣れている方を希望します。',
+    otherRequests: '知的障害・発達障害の外出支援に慣れている方を希望します。',
     freeMessageToProvider:
-      '体力があるため、一緒に歩くペースを合わせてくださる方だと助かります。まずは短時間の移動支援から始めたいです。',
+      'まずは短時間の移動支援から始めたいです。絵カード等の事前準備にご協力いただけると助かります。',
   },
   {
     userId: 'user-004',
@@ -410,7 +376,7 @@ export const INITIAL_USER_PREFERENCES: UserPreferences[] = [
     frequency: '週1〜2回',
     startTiming: 'できるだけ早く（1か月以内）',
     preferredAreas: ['杉並区', '武蔵野市', '三鷹市'],
-    otherRequests: '同行援護従業者養成研修を修了されている女性ヘルパーさんを希望します。',
+    otherRequests: '同行援護研修を修了されている女性ヘルパーさんを希望します。',
     freeMessageToProvider:
       '火曜または木曜の午前に通院と買い物の同行援護をお願いできる事業所を探しています。',
   },
@@ -433,6 +399,8 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
   {
     id: 'prov-001',
     name: 'あおぞらケアセンター杉並',
+    designatedNumber: '1311501234',
+    updatedAt: RECENT_DATE_2,
     locationCity: '杉並区',
     serviceTypes: ['移動支援', '居宅介護', '同行援護'],
     introduction:
@@ -446,35 +414,59 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
     coverageAreas: ['杉並区', '中野区', '武蔵野市'],
     businessDaysHours: '月曜〜日曜 8:30〜19:00（年中無休・年末年始除く）',
     messageFromProvider:
-      '「外出を楽しみたい」「自宅での入浴を安心したい」というご本人・ご家族の思いに寄り添います。受給者証の申請中の方も遠慮なくご相談ください。',
+      '「外出を楽しみたい」「自宅での入浴を安心したい」というご本人・ご家族の思いに寄り添います。',
+    appealMessage: '土曜・日曜の午後なら、女性ヘルパーによる車いす外出支援（移動支援）を受けられます',
+    filterOnlyMatchingRequests: false,
+    staffMembers: [
+      { id: 'st-001', name: '山本 恵美', roleTitle: 'サービス提供責任者', qualifications: '介護福祉士・同行援護応用', active: true },
+      { id: 'st-002', name: '佐藤 理恵', roleTitle: '登録ヘルパー', qualifications: '実務者研修・重度訪問基礎', active: true },
+    ],
+    branches: [
+      { id: 'br-001', name: 'あおぞらケアセンター杉並（本店）', designatedNumber: '1311501234', city: '杉並区', addressNote: '阿佐谷南エリア', serviceTypes: ['移動支援', '居宅介護', '同行援護'], isMain: true },
+    ],
   },
   {
     id: 'prov-002',
     name: 'ネクストライフ重度訪問介護ステーション',
+    designatedNumber: '1311405678',
+    updatedAt: TODAY,
     locationCity: '中野区',
     serviceTypes: ['重度訪問介護', '居宅介護', '移動支援'],
     introduction:
-      '重度肢体不自由の方への長時間支援・移乗介助・2人介助・医療的ケアに特化した事業所です。男性・女性ヘルパーともに経験豊富なスタッフが揃っています。',
+      '重度肢体不自由や難病の方への長時間支援・移乗介助・2人介助・医療的ケアに特化した法人です。複数拠点から経験豊富なスタッフが訪問します。',
     features: [
-      '重度訪問介護・区分5〜6の実績多数',
-      'リフト・スライディングボード移乗対応',
-      '喀痰吸引・経管栄養の登録特定行為事業者',
+      '重度訪問介護・区分5〜6・難病の実績多数',
+      'リフト・スライディングボード移乗・喀痰吸引対応',
+      '中野本店・新宿サテライトの2拠点体制',
     ],
     contactPersonName: '佐々木 健太（管理者・サービス提供責任者）',
     coverageAreas: ['中野区', '杉並区', '新宿区', '渋谷区'],
     businessDaysHours: '24時間365日対応（窓口受付：平日9:00〜18:00）',
     messageFromProvider:
-      'ベッドから車いすへの移乗や長時間の見守り・身体介助など、専門性の高いケアもお任せください。事前の手順確認や同行研修を丁寧に行います。',
+      'ベッドから車いすへの移乗や長時間の見守り・身体介助など、専門性の高いケアもお任せください。',
+    appealMessage: '平日の重度訪問介護・喀痰吸引などの医療的ケア・2人介助に対応可能です',
+    filterOnlyMatchingRequests: false,
+    staffMembers: [
+      { id: 'st-003', name: '佐々木 健太', roleTitle: '管理者・サ責', qualifications: '介護福祉士・喀痰吸引等研修', active: true },
+      { id: 'st-004', name: '高橋 大輔', roleTitle: 'サービス提供責任者', qualifications: '介護福祉士・行動援護', active: true },
+      { id: 'st-005', name: '伊藤 ゆかり', roleTitle: '看護師兼ヘルパー', qualifications: '正看護師', active: true },
+    ],
+    branches: [
+      { id: 'br-002', name: '中野中央ステーション（本店）', designatedNumber: '1311405678', city: '中野区', addressNote: '中野区中央エリア', serviceTypes: ['重度訪問介護', '居宅介護', '移動支援'], isMain: true },
+      { id: 'br-003', name: '新宿西口サテライト拠点', designatedNumber: '1310409911', city: '新宿区', addressNote: '西新宿エリア', serviceTypes: ['重度訪問介護', '居宅介護'], isMain: false },
+    ],
   },
   {
     id: 'prov-003',
     name: 'ぽかぽかサポート世田谷',
+    designatedNumber: '1311203344',
+    updatedAt: RECENT_DATE_4,
     locationCity: '世田谷区',
     serviceTypes: ['移動支援', '居宅介護'],
     introduction:
-      '知的障害・自閉スペクトラム症・精神障害のある方の余暇外出支援（移動支援）や居宅での家事援助・見守りに力を入れています。行動援護研修修了者も在籍しています。',
+      '知的障害・発達障害・精神障害のある方の余暇外出支援（移動支援）や居宅での見守りに力を入れています。行動援護従業者養成研修修了者が多数在籍しています。',
     features: [
-      '知的・精神障害の特性に配慮した支援',
+      '知的・発達・精神障害の特性に配慮した支援',
       '絵カードやスケジュール提示による見通し支援',
       '休日の余暇外出・移動支援に強い',
     ],
@@ -482,11 +474,21 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
     coverageAreas: ['世田谷区', '杉並区', '渋谷区'],
     businessDaysHours: '月曜〜土曜・祝日 9:00〜18:00（日曜は移動支援のみ応相談）',
     messageFromProvider:
-      '環境の変化が苦手な方やこだわりがある方も、ご本人とご家族のペースに合わせて少しずつ慣れていただけるようサポートしています。',
+      '環境の変化が苦手な方やこだわりがある方も、ご本人とご家族のペースに合わせてサポートしています。',
+    appealMessage: '絵カードを使った見通し支援や、休日の余暇移動支援（行動障害配慮あり）に対応しています',
+    filterOnlyMatchingRequests: false,
+    staffMembers: [
+      { id: 'st-006', name: '田村 翔太', roleTitle: 'サービス提供責任者', qualifications: '行動援護・強度行動障害支援者', active: true },
+    ],
+    branches: [
+      { id: 'br-004', name: 'ぽかぽかサポート世田谷', designatedNumber: '1311203344', city: '世田谷区', addressNote: '経堂・桜上水エリア', serviceTypes: ['移動支援', '居宅介護'], isMain: true },
+    ],
   },
   {
     id: 'prov-004',
     name: 'ひかり同行援護・ガイドヘルプ事業所',
+    designatedNumber: '1311507788',
+    updatedAt: RECENT_DATE_8,
     locationCity: '杉並区',
     serviceTypes: ['同行援護', '移動支援', '居宅介護'],
     introduction:
@@ -500,15 +502,25 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
     coverageAreas: ['杉並区', '武蔵野市', '三鷹市', '練馬区', '中野区'],
     businessDaysHours: '月曜〜土曜 8:00〜18:00',
     messageFromProvider:
-      '初めての同行援護のご利用でも安心していただけるよう、歩く速度や声かけの方法をご本人と細かく確認しながら支援いたします。',
+      '歩く速度や声かけの方法をご本人と細かく確認しながら、安心して外出できるよう支援いたします。',
+    appealMessage: '火曜・木曜の午前なら、同行援護専門の女性ガイドヘルパーが通院・買い物に同行できます',
+    filterOnlyMatchingRequests: false,
+    staffMembers: [
+      { id: 'st-007', name: '中村 由紀子', roleTitle: 'サービス提供責任者', qualifications: '同行援護応用・介護福祉士', active: true },
+    ],
+    branches: [
+      { id: 'br-005', name: 'ひかり同行援護 杉並', designatedNumber: '1311507788', city: '杉並区', addressNote: '久我山・西荻窪エリア', serviceTypes: ['同行援護', '移動支援', '居宅介護'], isMain: true },
+    ],
   },
   {
     id: 'prov-005',
     name: 'くらしの輪ヘルパーステーション練馬',
+    designatedNumber: '1312004455',
+    updatedAt: STALE_DATE_35, // 更新から30日以上経過（警告表示＆並び順低下の確認用デモ）
     locationCity: '練馬区',
     serviceTypes: ['居宅介護'],
     introduction:
-      '精神障害や内部障害・身体障害のある方のご自宅での自立生活を支える居宅介護事業所です。調理・掃除・洗濯などの家事援助から身体介護まで丁寧に対応します。',
+      '精神障害や発達障害・身体障害のある方のご自宅での自立生活を支える居宅介護事業所です。調理・掃除・洗濯などの家事援助から身体介護まで丁寧に対応します。',
     features: [
       '精神障害・体調の波に寄り添う家事援助',
       '専任担当制で環境の変化を最小限に',
@@ -519,6 +531,14 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
     businessDaysHours: '平日（月〜金）9:00〜17:30（土日祝休業）',
     messageFromProvider:
       '「知らない人が家に来るのが不安」という方にも安心していただけるよう、事前の顔合わせから丁寧に行っています。',
+    appealMessage: '水曜・金曜午後の家事援助（女性ヘルパー・固定担当制）のご相談が可能です',
+    filterOnlyMatchingRequests: false,
+    staffMembers: [
+      { id: 'st-008', name: '小林 真理', roleTitle: 'サービス提供責任者', qualifications: '介護福祉士・精神障害者支援', active: true },
+    ],
+    branches: [
+      { id: 'br-006', name: 'くらしの輪 練馬', designatedNumber: '1312004455', city: '練馬区', addressNote: '練馬駅周辺', serviceTypes: ['居宅介護'], isMain: true },
+    ],
   },
 ];
 
@@ -544,10 +564,19 @@ export const INITIAL_PROVIDER_CAPABILITIES: ProviderCapabilities[] = [
     supportedDisabilities: [
       '身体障害',
       '知的障害',
+      '発達障害',
       '視覚障害',
       '精神障害',
     ],
-    medicalCareRangeText: '服薬確認・見守り、ストーマ装具の排泄破棄補助に対応可能（吸引等は要相談）',
+    supportsBehavioralDisorder: '条件付きで相談可',
+    behavioralDisorderNote: '軽度〜中等度のパニック・こだわりは事前共有の上で対応可',
+    supportsMedicalCare: '条件付きで相談可',
+    medicalCareRangeText: '服薬確認・見守り、ストーマ装具の排泄破棄補助に対応（喀痰吸引は要相談）',
+    supportsEpilepsyResponse: '条件付きで相談可',
+    epilepsyResponseNote: '事前の緊急連絡先・発作時マニュアル共有で対応可',
+    supportedCommunicationMethods: ['言葉・音声での対話', 'ゆっくり・短い言葉での説明', '筆談・文字盤'],
+    supportsTransport: false,
+    transportRangeText: '送迎車両なし（公共交通機関・車いすでの同行支援）',
     supportsTwoPersonCare: false,
     supportsWheelchairTransfer: true,
     helperGenderPolicy: '同性介助の希望に可能な範囲で対応',
@@ -571,12 +600,21 @@ export const INITIAL_PROVIDER_CAPABILITIES: ProviderCapabilities[] = [
     ],
     supportedDisabilities: [
       '身体障害',
+      '難病',
       '重度障害',
       '医療的な配慮が必要な方',
       '知的障害',
     ],
+    supportsBehavioralDisorder: '条件付きで相談可',
+    behavioralDisorderNote: '強度行動障害研修修了ヘルパー在籍（シフト調整が必要）',
+    supportsMedicalCare: '対応可能',
     medicalCareRangeText:
-      '喀痰吸引（口腔・鼻腔・気管カニューレ内部）、経管栄養（胃ろう・腸ろう）の研修修了ヘルパーが在籍。2人介助・リフト移乗にも対応。',
+      '喀痰吸引（口腔・鼻腔・気管カニューレ内部）、経管栄養（胃ろう・腸ろう）対応。2人介助・リフト移乗可',
+    supportsEpilepsyResponse: '対応可能',
+    epilepsyResponseNote: '医療的ケア対応スタッフによる発作時見守り・救急連携体制あり',
+    supportedCommunicationMethods: ['言葉・音声での対話', '筆談・文字盤', 'ジェスチャー・指さし'],
+    supportsTransport: true,
+    transportRangeText: '中野区・杉並区・新宿区（通院時福祉車両手配の相談可）',
     supportsTwoPersonCare: true,
     supportsWheelchairTransfer: true,
     helperGenderPolicy: '男女どちらも対応可能',
@@ -599,11 +637,25 @@ export const INITIAL_PROVIDER_CAPABILITIES: ProviderCapabilities[] = [
     ],
     supportedDisabilities: [
       '知的障害',
+      '発達障害',
       '精神障害',
       '行動面で配慮が必要な方',
       '身体障害',
     ],
-    medicalCareRangeText: 'てんかん発作時の見守り・救急連絡手順の共有に対応（医療処置は対象外）',
+    supportsBehavioralDisorder: '対応可能',
+    behavioralDisorderNote: '強度行動障害支援者養成研修修了者が在籍し、絵カードや構造化支援に対応',
+    supportsMedicalCare: '対応不可',
+    medicalCareRangeText: '吸引や胃ろう等の医療的ケアは不可（服薬声かけのみ可）',
+    supportsEpilepsyResponse: '対応可能',
+    epilepsyResponseNote: 'てんかん発作時の安全確保・時間計測・主治医マニュアルに沿った対応が可能',
+    supportedCommunicationMethods: [
+      '言葉・音声での対話',
+      'ゆっくり・短い言葉での説明',
+      '絵カード・スケジュール表',
+      'ジェスチャー・指さし',
+    ],
+    supportsTransport: false,
+    transportRangeText: '送迎不可（ご自宅集合・電車やバスでの移動支援）',
     supportsTwoPersonCare: true,
     supportsWheelchairTransfer: false,
     helperGenderPolicy: '男女どちらも対応可能',
@@ -623,8 +675,21 @@ export const INITIAL_PROVIDER_CAPABILITIES: ProviderCapabilities[] = [
       '掃除',
       '洗濯',
     ],
-    supportedDisabilities: ['視覚障害', '身体障害', '精神障害'],
-    medicalCareRangeText: '通院時の医師説明のメモ・代筆、点眼薬の声かけ確認に対応',
+    supportedDisabilities: ['視覚障害', '身体障害', '精神障害', '難病'],
+    supportsBehavioralDisorder: '対応不可',
+    behavioralDisorderNote: '強度行動障害を伴う長時間の見守りは対象外',
+    supportsMedicalCare: '条件付きで相談可',
+    medicalCareRangeText: '通院時の医師説明メモ・代筆、点眼薬の声かけ確認に対応',
+    supportsEpilepsyResponse: '条件付きで相談可',
+    epilepsyResponseNote: '軽度発作歴がある方は事前相談の上で対応可',
+    supportedCommunicationMethods: [
+      '言葉・音声での対話',
+      '音声案内・代読代筆（視覚配慮）',
+      '筆談・文字盤',
+      '手話・触手話',
+    ],
+    supportsTransport: false,
+    transportRangeText: '送迎不可（最寄り駅またはご自宅からの徒歩・公共交通同行）',
     supportsTwoPersonCare: false,
     supportsWheelchairTransfer: false,
     helperGenderPolicy: '女性ヘルパーの対応が可能',
@@ -641,8 +706,20 @@ export const INITIAL_PROVIDER_CAPABILITIES: ProviderCapabilities[] = [
       '歩行の見守り・介助',
       '着替えの介助',
     ],
-    supportedDisabilities: ['精神障害', '知的障害', '身体障害'],
-    medicalCareRangeText: '服薬カレンダーによる内服確認の声かけに対応',
+    supportedDisabilities: ['精神障害', '発達障害', '知的障害', '身体障害'],
+    supportsBehavioralDisorder: '条件付きで相談可',
+    behavioralDisorderNote: '環境変化への配慮・穏やかな家事サポート中心で対応',
+    supportsMedicalCare: '対応不可',
+    medicalCareRangeText: '服薬カレンダーによる内服確認の声かけのみ対応',
+    supportsEpilepsyResponse: '対応不可',
+    epilepsyResponseNote: '発作対応が必要な場合は事前に要相談',
+    supportedCommunicationMethods: [
+      '言葉・音声での対話',
+      'ゆっくり・短い言葉での説明',
+      '筆談・文字盤',
+    ],
+    supportsTransport: false,
+    transportRangeText: '送迎不可',
     supportsTwoPersonCare: false,
     supportsWheelchairTransfer: false,
     helperGenderPolicy: '女性ヘルパーの対応が可能',
@@ -655,12 +732,12 @@ export const INITIAL_PROVIDER_AVAILABILITY: ProviderAvailability[] = [
     providerId: 'prov-001',
     acceptanceStatus: '新規利用者を積極的に募集中',
     acceptableConditionsNote:
-      '土曜・日曜の午後（12時〜17時）の移動支援（車いす可・女性ヘルパー希望可）に空き枠があります。平日の入浴介助も火・木で調整可能です。',
-    updatedAt: '2026-11-05',
+      '土曜・日曜の午後（12時〜17時）の移動支援（車いす可・女性ヘルパー希望可）を受け入れています。',
+    updatedAt: RECENT_DATE_2,
     weeklySchedule: [
       { day: '月', available: true, timeSlots: ['午前（9時〜12時）', '午後（12時〜17時）'], note: '9時〜12時、13時〜17時' },
       { day: '火', available: true, timeSlots: ['午前（9時〜12時）', '午後（12時〜17時）'], note: '9時〜17時' },
-      { day: '水', available: false, timeSlots: [], note: '現在空き枠なし（要相談）' },
+      { day: '水', available: false, timeSlots: [], note: '水曜は現在定期枠のみ' },
       { day: '木', available: true, timeSlots: ['午前（9時〜12時）', '午後（12時〜17時）'], note: '9時〜17時' },
       { day: '金', available: true, timeSlots: ['午前（9時〜12時）', '午後（12時〜17時）'], note: '10時〜16時' },
       { day: '土', available: true, timeSlots: ['午前（9時〜12時）', '午後（12時〜17時）'], note: '10時〜17時（女性ヘルパー対応可）' },
@@ -671,8 +748,8 @@ export const INITIAL_PROVIDER_AVAILABILITY: ProviderAvailability[] = [
     providerId: 'prov-002',
     acceptanceStatus: '条件によって受け入れ相談可能',
     acceptableConditionsNote:
-      '重度訪問介護（区分4〜6）の平日日中枠（月・水・金）を優先して受け入れています。移乗介助・長時間枠の調整が可能です。',
-    updatedAt: '2026-11-06',
+      '重度訪問介護（区分4〜6・難病）の平日日中枠（月・水・金）を優先して受け入れています。',
+    updatedAt: TODAY,
     weeklySchedule: [
       { day: '月', available: true, timeSlots: ['早朝（6時〜9時）', '午前（9時〜12時）', '午後（12時〜17時）', '夕方・夜間（17時〜22時）'], note: '8時〜20時' },
       { day: '火', available: true, timeSlots: ['午後（12時〜17時）'], note: '13時〜17時のみ相談可' },
@@ -687,8 +764,8 @@ export const INITIAL_PROVIDER_AVAILABILITY: ProviderAvailability[] = [
     providerId: 'prov-003',
     acceptanceStatus: '新規利用者を積極的に募集中',
     acceptableConditionsNote:
-      '土曜・日曜・祝日の移動支援（知的障害・自閉症の方の余暇外出）で男女ヘルパーともに受け入れ可能です。',
-    updatedAt: '2026-11-04',
+      '土曜・日曜・祝日の移動支援（知的・発達障害の方の余暇外出）を受け入れ可能です。',
+    updatedAt: RECENT_DATE_4,
     weeklySchedule: [
       { day: '月', available: true, timeSlots: ['午後（12時〜17時）'], note: '14時〜18時' },
       { day: '火', available: true, timeSlots: ['午後（12時〜17時）'], note: '14時〜18時' },
@@ -703,8 +780,8 @@ export const INITIAL_PROVIDER_AVAILABILITY: ProviderAvailability[] = [
     providerId: 'prov-004',
     acceptanceStatus: '一部の曜日・時間帯のみ受け入れ可能',
     acceptableConditionsNote:
-      '火曜・木曜・土曜の午前〜午後の同行援護（通院・買い物同行）および居宅介護（家事援助）を受け入れ可能です。',
-    updatedAt: '2026-11-05',
+      '火曜・木曜・土曜の午前〜午後の同行援護（通院・買い物同行）を受け入れ可能です。',
+    updatedAt: RECENT_DATE_8,
     weeklySchedule: [
       { day: '月', available: false, timeSlots: [], note: '対応不可' },
       { day: '火', available: true, timeSlots: ['午前（9時〜12時）', '午後（12時〜17時）'], note: '9時〜16時（女性ガイドヘルパー可）' },
@@ -719,8 +796,8 @@ export const INITIAL_PROVIDER_AVAILABILITY: ProviderAvailability[] = [
     providerId: 'prov-005',
     acceptanceStatus: '条件によって受け入れ相談可能',
     acceptableConditionsNote:
-      '平日（特に水曜・金曜の午後）の家事援助（調理・掃除・洗濯）で女性ヘルパーの定期訪問が可能です。受給者証申請中の方も事前面談可能です。',
-    updatedAt: '2026-11-06',
+      '平日（特に水曜・金曜の午後）の家事援助で女性ヘルパーの定期訪問が可能です。',
+    updatedAt: STALE_DATE_35,
     weeklySchedule: [
       { day: '月', available: true, timeSlots: ['午前（9時〜12時）'], note: '9時〜12時' },
       { day: '火', available: false, timeSlots: [], note: '対応不可' },
@@ -733,14 +810,86 @@ export const INITIAL_PROVIDER_AVAILABILITY: ProviderAvailability[] = [
   },
 ];
 
+export const INITIAL_PROVIDER_SUBSCRIPTIONS: ProviderSubscription[] = [
+  {
+    providerId: 'prov-001',
+    planId: 'standard',
+    billingCycle: 'monthly',
+    status: 'active',
+    startedAt: addMonthsToIso(TODAY, -1),
+    nextRenewalDate: addMonthsToIso(TODAY, 1),
+    accountApprovalStatus: 'approved',
+    paymentSummary: {
+      method: 'bank_transfer',
+      displayLabel: 'みずほ銀行 杉並支店 普通 ••••567',
+      billingDayLabel: '毎月27日 口座振替（オンライン手続き確認済）',
+      status: 'bank_active',
+      updatedAt: RECENT_DATE_8,
+    },
+  },
+  {
+    providerId: 'prov-002',
+    planId: 'pro',
+    billingCycle: 'annual',
+    status: 'active',
+    startedAt: addMonthsToIso(TODAY, -2),
+    nextRenewalDate: addMonthsToIso(TODAY, 10),
+    accountApprovalStatus: 'approved',
+    paymentSummary: {
+      method: 'invoice',
+      displayLabel: '請求書払い（ネクストライフ株式会社 宛 / INV-20261015-101）',
+      billingDayLabel: `年払い一括・支払済`,
+      status: 'invoice_issued',
+      updatedAt: addMonthsToIso(TODAY, -2),
+      invoiceNumber: 'INV-20261015-101',
+    },
+  },
+  {
+    providerId: 'prov-003',
+    planId: 'free',
+    billingCycle: 'monthly',
+    status: 'active',
+    startedAt: RECENT_DATE_8,
+    nextRenewalDate: '-',
+    accountApprovalStatus: 'approved',
+  },
+  {
+    providerId: 'prov-004',
+    planId: 'standard',
+    billingCycle: 'monthly',
+    status: 'active',
+    startedAt: addMonthsToIso(TODAY, -1),
+    nextRenewalDate: addMonthsToIso(TODAY, 1),
+    accountApprovalStatus: 'approved',
+    paymentSummary: {
+      method: 'credit_card',
+      displayLabel: 'Visa •••• 4242（有効期限 12/28）',
+      billingDayLabel: '毎月同日 自動決済（クレジットカード）',
+      status: 'card_verified',
+      updatedAt: RECENT_DATE_8,
+    },
+  },
+  {
+    providerId: 'prov-005',
+    planId: 'free',
+    billingCycle: 'monthly',
+    status: 'active',
+    startedAt: STALE_DATE_35,
+    nextRenewalDate: '-',
+    accountApprovalStatus: 'approved',
+  },
+];
+
 export const INITIAL_INTERACTIONS: MatchingInteraction[] = [
   {
     userId: 'user-001',
     providerId: 'prov-001',
     isUserFavorite: true,
+    userFavoriteNote: '土曜午後の車いす対応が可能。女性ヘルパーあり',
+    favoritedAt: `${RECENT_DATE_4} 10:20`,
     providerReaction: '対応を検討したい',
     caseStatus: '対応中',
-    updatedAt: '2026-11-06 10:30',
+    updatedAt: `${RECENT_DATE_2} 10:30`,
   },
   {
     userId: 'user-002',
@@ -748,7 +897,7 @@ export const INITIAL_INTERACTIONS: MatchingInteraction[] = [
     isUserFavorite: false,
     providerReaction: '詳しい条件を確認したい',
     caseStatus: '検討中',
-    updatedAt: '2026-11-07 14:00',
+    updatedAt: `${RECENT_DATE_2} 14:00`,
   },
   {
     userId: 'user-002',
@@ -756,7 +905,7 @@ export const INITIAL_INTERACTIONS: MatchingInteraction[] = [
     isUserFavorite: true,
     providerReaction: '詳しい条件を確認したい',
     caseStatus: '対応中',
-    updatedAt: '2026-11-06 11:15',
+    updatedAt: `${TODAY} 11:15`,
   },
   {
     userId: 'user-003',
@@ -764,7 +913,7 @@ export const INITIAL_INTERACTIONS: MatchingInteraction[] = [
     isUserFavorite: true,
     providerReaction: '対応を検討したい',
     caseStatus: '検討中',
-    updatedAt: '2026-11-05 16:00',
+    updatedAt: `${RECENT_DATE_4} 16:00`,
   },
   {
     userId: 'user-004',
@@ -772,7 +921,7 @@ export const INITIAL_INTERACTIONS: MatchingInteraction[] = [
     isUserFavorite: true,
     providerReaction: '対応を検討したい',
     caseStatus: '対応中',
-    updatedAt: '2026-11-05 14:20',
+    updatedAt: `${RECENT_DATE_2} 14:20`,
   },
   {
     userId: 'user-005',
@@ -780,126 +929,7 @@ export const INITIAL_INTERACTIONS: MatchingInteraction[] = [
     isUserFavorite: false,
     providerReaction: '対応を検討したい',
     caseStatus: '検討中',
-    updatedAt: '2026-11-06 09:45',
-  },
-];
-
-export const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: 'msg-001',
-    userId: 'user-001',
-    providerId: 'prov-001',
-    senderType: 'user',
-    text: 'はじめまして。娘（40代・車いす使用）の土曜午後の移動支援について相談したくメッセージいたしました。女性ヘルパーさんの対応は可能でしょうか？',
-    createdAt: '2026-11-06 10:15',
-    readByRecipient: true,
-  },
-  {
-    id: 'msg-002',
-    userId: 'user-001',
-    providerId: 'prov-001',
-    senderType: 'provider',
-    text: 'お問い合わせありがとうございます。あおぞらケアセンター杉並の山本です。土曜日の13時〜17時頃でしたら、車いす介助・排泄介助に慣れた女性ヘルパーが対応可能です。一度詳しいご希望を伺えますでしょうか？',
-    createdAt: '2026-11-06 10:42',
-    readByRecipient: false,
-  },
-  {
-    id: 'msg-003',
-    userId: 'user-002',
-    providerId: 'prov-002',
-    senderType: 'provider',
-    text: 'ご登録の希望条件を拝見しました。月・水・金の日中枠で重度訪問介護およびスライディングボード移乗介助の対応が可能です。よろしければ詳細をご相談させてください。',
-    createdAt: '2026-11-06 11:20',
-    readByRecipient: false,
-  },
-  {
-    id: 'msg-004',
-    userId: 'user-004',
-    providerId: 'prov-004',
-    senderType: 'user',
-    text: '火曜・木曜の午前に同行援護（通院と買い物）を利用したいです。対応可能でしょうか？',
-    createdAt: '2026-11-05 15:10',
-    readByRecipient: true,
-  },
-  {
-    id: 'msg-005',
-    userId: 'user-004',
-    providerId: 'prov-004',
-    senderType: 'provider',
-    text: 'ひかり同行援護の中村です。火曜・木曜の午前枠、女性ガイドヘルパーにて対応可能です。通院先のエリアなどを差し支えない範囲で教えていただけますでしょうか。',
-    createdAt: '2026-11-05 16:05',
-    readByRecipient: true,
-  },
-];
-
-export const INITIAL_DISCLOSURES: DisclosureConsent[] = [
-  {
-    userId: 'user-001',
-    providerId: 'prov-001',
-    stage: 2,
-    disclosedFields: {
-      nicknameAndRole: true,
-      nearestStationArea: true,
-      preferredContactMethod: true,
-      consultationSupportOffice: true,
-      detailedScheduleNote: true,
-    },
-  },
-  {
-    userId: 'user-004',
-    providerId: 'prov-004',
-    stage: 3,
-    consentedAt: '2026-11-05 16:30',
-    disclosedFields: {
-      nicknameAndRole: true,
-      nearestStationArea: true,
-      preferredContactMethod: true,
-      consultationSupportOffice: true,
-      detailedScheduleNote: true,
-    },
-  },
-];
-
-export const INITIAL_PROVIDER_SUBSCRIPTIONS: ProviderSubscription[] = [
-  {
-    providerId: 'prov-001',
-    planId: 'standard',
-    status: 'active',
-    startedAt: '2026-10-10',
-    nextRenewalDate: '2026-12-10',
-    accountApprovalStatus: 'approved',
-  },
-  {
-    providerId: 'prov-002',
-    planId: 'standard',
-    status: 'active',
-    startedAt: '2026-10-15',
-    nextRenewalDate: '2026-12-15',
-    accountApprovalStatus: 'approved',
-  },
-  {
-    providerId: 'prov-003',
-    planId: 'free',
-    status: 'active',
-    startedAt: '2026-11-01',
-    nextRenewalDate: '-',
-    accountApprovalStatus: 'approved',
-  },
-  {
-    providerId: 'prov-004',
-    planId: 'standard',
-    status: 'active',
-    startedAt: '2026-10-20',
-    nextRenewalDate: '2026-12-20',
-    accountApprovalStatus: 'approved',
-  },
-  {
-    providerId: 'prov-005',
-    planId: 'free',
-    status: 'active',
-    startedAt: '2026-11-04',
-    nextRenewalDate: '-',
-    accountApprovalStatus: 'approved',
+    updatedAt: `${RECENT_DATE_8} 09:45`,
   },
 ];
 
@@ -912,8 +942,8 @@ export const INITIAL_CHAT_REQUESTS: ChatRequest[] = [
     status: 'approved',
     initialMessage:
       '土曜午後の移動支援（車いす・女性ヘルパー希望）について相談したいです。',
-    requestedAt: '2026-11-06 10:15',
-    respondedAt: '2026-11-06 10:30',
+    requestedAt: `${RECENT_DATE_4} 10:15`,
+    respondedAt: `${RECENT_DATE_4} 10:30`,
   },
   {
     id: 'creq-002',
@@ -922,8 +952,8 @@ export const INITIAL_CHAT_REQUESTS: ChatRequest[] = [
     initiatedBy: 'provider',
     status: 'pending',
     initialMessage:
-      'ご登録の希望条件（杉並エリア・車いす介助・入浴介助）を拝見しました。当事業所では女性ヘルパーによる土曜午後の移動支援および平日入浴介助の対応が可能です。よろしければチャットでお話しできませんか？',
-    requestedAt: '2026-11-08 14:20',
+      'ご登録の希望条件（杉並エリア・車いす介助・入浴介助）を拝見しました。一度チャットで詳しいご希望を伺えますでしょうか？',
+    requestedAt: `${RECENT_DATE_2} 14:20`,
   },
   {
     id: 'creq-003',
@@ -933,8 +963,8 @@ export const INITIAL_CHAT_REQUESTS: ChatRequest[] = [
     status: 'approved',
     initialMessage:
       '中野区での月・水・金の日中重度訪問介護および移乗介助に対応可能です。詳細をご相談させてください。',
-    requestedAt: '2026-11-06 11:15',
-    respondedAt: '2026-11-06 11:18',
+    requestedAt: `${RECENT_DATE_2} 11:15`,
+    respondedAt: `${RECENT_DATE_2} 11:18`,
   },
   {
     id: 'creq-004',
@@ -943,8 +973,8 @@ export const INITIAL_CHAT_REQUESTS: ChatRequest[] = [
     initiatedBy: 'provider',
     status: 'pending',
     initialMessage:
-      '練馬・杉並エリアでの水曜・金曜午後の家事援助（女性ヘルパー担当）について、空き枠がございますのでご案内いたしました。',
-    requestedAt: '2026-11-08 16:00',
+      '練馬・杉並エリアでの水曜・金曜午後の家事援助（女性ヘルパー担当）について、受入条件と一致したためご案内いたしました。',
+    requestedAt: `${TODAY} 09:10`,
   },
   {
     id: 'creq-005',
@@ -953,7 +983,272 @@ export const INITIAL_CHAT_REQUESTS: ChatRequest[] = [
     initiatedBy: 'user',
     status: 'approved',
     initialMessage: '火曜・木曜午前の同行援護について相談したいです。',
-    requestedAt: '2026-11-05 15:10',
-    respondedAt: '2026-11-05 16:00',
+    requestedAt: `${RECENT_DATE_4} 15:10`,
+    respondedAt: `${RECENT_DATE_4} 16:00`,
+  },
+];
+
+export const INITIAL_MESSAGES: ChatMessage[] = [
+  {
+    id: 'msg-001',
+    userId: 'user-001',
+    providerId: 'prov-001',
+    senderType: 'user',
+    text: 'はじめまして。娘（40代・車いす使用）の土曜午後の移動支援について相談したくメッセージいたしました。女性ヘルパーさんの対応は可能でしょうか？',
+    createdAt: `${RECENT_DATE_4} 10:15`,
+    readByRecipient: true,
+    messageKind: 'text',
+  },
+  {
+    id: 'msg-002',
+    userId: 'user-001',
+    providerId: 'prov-001',
+    senderType: 'provider',
+    text: 'お問い合わせありがとうございます。あおぞらケアセンター杉並の山本です。土曜日の午後でしたら、車いす介助に慣れた女性ヘルパーが対応可能です。',
+    createdAt: `${RECENT_DATE_4} 10:42`,
+    readByRecipient: false,
+    messageKind: 'text',
+  },
+  {
+    id: 'msg-003',
+    userId: 'user-002',
+    providerId: 'prov-002',
+    senderType: 'provider',
+    text: 'ご登録の希望条件を拝見しました。月・水・金の日中枠で重度訪問介護およびスライディングボード移乗介助の対応が可能です。',
+    createdAt: `${RECENT_DATE_2} 11:20`,
+    readByRecipient: false,
+    messageKind: 'text',
+  },
+  {
+    id: 'msg-004',
+    userId: 'user-004',
+    providerId: 'prov-004',
+    senderType: 'user',
+    text: '火曜・木曜の午前に同行援護（通院と買い物）を利用したいです。見学・面談を申し込みたいです。',
+    createdAt: `${RECENT_DATE_4} 15:10`,
+    readByRecipient: true,
+    messageKind: 'interview_request',
+  },
+  {
+    id: 'msg-005',
+    userId: 'user-004',
+    providerId: 'prov-004',
+    senderType: 'provider',
+    text: '火曜 午前（9時〜12時）でオンライン・対面どちらの面談も決定可能です。よろしくお願いいたします。',
+    createdAt: `${RECENT_DATE_2} 16:05`,
+    readByRecipient: true,
+    messageKind: 'schedule_confirmed',
+    confirmedKind: 'interview',
+    confirmedSlot: { day: '火', timeSlot: '午前（9時〜12時）' },
+  },
+];
+
+export const INITIAL_DISCLOSURES: DisclosureConsent[] = [
+  {
+    userId: 'user-001',
+    providerId: 'prov-001',
+    stage: 1,
+    disclosedFields: {
+      nicknameAndRole: true,
+      conditionProfile: false,
+      nearestStationArea: false,
+      preferredContactMethod: false,
+      consultationSupportOffice: false,
+      detailedScheduleNote: false,
+      piiContactAccess: false,
+    },
+  },
+  {
+    userId: 'user-002',
+    providerId: 'prov-002',
+    stage: 2,
+    consentedAt: `${RECENT_DATE_2} 11:18`,
+    disclosedFields: {
+      nicknameAndRole: true,
+      conditionProfile: true,
+      nearestStationArea: true,
+      preferredContactMethod: true,
+      consultationSupportOffice: true,
+      detailedScheduleNote: true,
+      piiContactAccess: false,
+    },
+  },
+  {
+    userId: 'user-004',
+    providerId: 'prov-004',
+    stage: 3,
+    consentedAt: `${RECENT_DATE_2} 16:30`,
+    scheduleDecidedAt: `${RECENT_DATE_2} 16:05`,
+    scheduleSummary: '面談：火曜 午前（9時〜12時）決定済',
+    disclosedFields: {
+      nicknameAndRole: true,
+      conditionProfile: true,
+      nearestStationArea: true,
+      preferredContactMethod: true,
+      consultationSupportOffice: true,
+      detailedScheduleNote: true,
+      piiContactAccess: true,
+    },
+  },
+];
+
+export const INITIAL_DISCLOSURE_HISTORY: DisclosureHistoryEntry[] = [
+  {
+    id: 'dhist-001',
+    userId: 'user-001',
+    providerId: 'prov-001',
+    providerName: 'あおぞらケアセンター杉並',
+    stage: 1,
+    action: 'granted',
+    disclosedItems: ['ニックネーム', '希望サービスと希望条件の概要（匿名）'],
+    timestamp: `${RECENT_DATE_4} 10:15`,
+  },
+  {
+    id: 'dhist-002',
+    userId: 'user-002',
+    providerId: 'prov-002',
+    providerName: 'ネクストライフ重度訪問介護ステーション',
+    stage: 2,
+    action: 'granted',
+    disclosedItems: ['障害種別', '介助内容', '希望曜日', '特性プロフィール・配慮事項'],
+    timestamp: `${RECENT_DATE_2} 11:18`,
+  },
+  {
+    id: 'dhist-003',
+    userId: 'user-004',
+    providerId: 'prov-004',
+    providerName: 'ひかり同行援護・ガイドヘルプ事業所',
+    stage: 3,
+    action: 'granted',
+    disclosedItems: ['氏名', '電話番号', 'メールアドレス（面談日程確定後）'],
+    timestamp: `${RECENT_DATE_2} 16:30`,
+  },
+];
+
+export const INITIAL_COORDINATORS: CoordinatorProfile[] = [
+  {
+    id: 'coord-001',
+    name: '佐藤 智子（相談支援専門員）',
+    officeName: '杉並区指定特定相談支援事業所 わかば相談室',
+    area: '杉並区・中野区・練馬区',
+    email: 'coord.wakaba@example.jp',
+    registeredAt: RECENT_DATE_8,
+  },
+];
+
+export const INITIAL_SHARED_CASES: SharedCaseToCoordinator[] = [
+  {
+    id: 'share-001',
+    userId: 'user-001',
+    coordinatorId: 'coord-001',
+    sharedAt: `${RECENT_DATE_4} 09:30`,
+    noteToCoordinator: '土曜午後に車いす対応できる女性ヘルパーのいる事業所を一緒に探したいです。',
+  },
+  {
+    id: 'share-002',
+    userId: 'user-003',
+    coordinatorId: 'coord-001',
+    sharedAt: `${RECENT_DATE_2} 15:00`,
+    noteToCoordinator: '移動支援（知的・発達障害）で絵カード対応が可能な事業所の候補をお願いします。',
+  },
+  {
+    id: 'share-003',
+    userId: 'user-005',
+    coordinatorId: 'coord-001',
+    sharedAt: `${TODAY} 08:40`,
+    noteToCoordinator: '受給者証の発行見込みに合わせて水曜・金曜午後の家事援助事業所を確認したいです。',
+  },
+];
+
+export const INITIAL_CREDENTIALS: AccountCredential[] = [
+  {
+    id: 'user-001',
+    role: 'user',
+    displayName: 'さくら（母代筆）',
+    email: 'sakura.demo@example.jp',
+    phoneNumber: '090-0000-0001',
+    password: 'password123',
+    mfaEnabled: true,
+    mfaMethod: 'email',
+    createdAt: `${RECENT_DATE_8} 09:00`,
+  },
+  {
+    id: 'prov-001',
+    role: 'provider',
+    displayName: 'あおぞらケアセンター杉並',
+    email: 'aozora@example.jp',
+    phoneNumber: '03-0000-1111',
+    password: 'password123',
+    mfaEnabled: true,
+    mfaMethod: 'email',
+    createdAt: `${RECENT_DATE_8} 09:00`,
+  },
+  {
+    id: 'prov-002',
+    role: 'provider',
+    displayName: 'ネクストライフ重度訪問介護ステーション',
+    email: 'nextlife@example.jp',
+    phoneNumber: '03-0000-2222',
+    password: 'password123',
+    mfaEnabled: true,
+    mfaMethod: 'email',
+    createdAt: `${RECENT_DATE_8} 09:00`,
+  },
+  {
+    id: 'prov-003',
+    role: 'provider',
+    displayName: 'ぽかぽかサポート世田谷',
+    email: 'pokapoka@example.jp',
+    phoneNumber: '03-0000-3333',
+    password: 'password123',
+    mfaEnabled: true,
+    mfaMethod: 'email',
+    createdAt: `${RECENT_DATE_8} 09:00`,
+  },
+];
+
+export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
+  {
+    id: 'log-001',
+    timestamp: `${TODAY} 09:00`,
+    actorId: 'admin-001',
+    actorRole: 'admin',
+    action: 'AUTH_LOGIN',
+    ipAddress: '192.168.1.1',
+    detail: '運営管理者によるセキュア認証成功（2段階認証済）',
+    isSecurityAlert: false,
+  },
+  {
+    id: 'log-002',
+    timestamp: `${RECENT_DATE_4} 09:15`,
+    actorId: 'user-001',
+    actorRole: 'user',
+    action: 'DATA_UPDATE_NEEDS',
+    targetId: 'user-001',
+    ipAddress: '192.168.1.10',
+    detail: '支援ニーズ・特性プロフィールの更新（移動支援・車いす介助等）',
+    isSecurityAlert: false,
+  },
+  {
+    id: 'log-003',
+    timestamp: `${RECENT_DATE_2} 10:15`,
+    actorId: 'prov-003',
+    actorRole: 'provider',
+    action: 'DATA_VIEW_PII',
+    targetId: 'user-002',
+    ipAddress: '192.168.1.88',
+    detail: '【アクセス拒否ブロック】第3段階同意未完了ユーザーの連絡先情報要求を検知・遮断',
+    isSecurityAlert: true,
+  },
+  {
+    id: 'log-004',
+    timestamp: `${RECENT_DATE_2} 16:30`,
+    actorId: 'user-004',
+    actorRole: 'user',
+    action: 'CONSENT_GRANTED',
+    targetId: 'prov-004',
+    ipAddress: '192.168.1.12',
+    detail: '面談日程決定に伴い特定事業所（prov-004）へ第3段階連絡先開示に利用者が同意',
+    isSecurityAlert: false,
   },
 ];

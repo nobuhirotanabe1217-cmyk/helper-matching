@@ -14,8 +14,14 @@ import {
 } from '../utils/speech';
 
 const STORAGE_SPEECH_RATE = 'carepita_a11y_speech_rate_v1';
-const STORAGE_HIGH_CONTRAST = 'carepita_a11y_high_contrast_v1';
-const STORAGE_LARGE_TEXT = 'carepita_a11y_large_text_v1';
+const STORAGE_TEXT_SCALE = 'carepita_a11y_text_scale_v2';
+const STORAGE_LINE_HEIGHT_WIDE = 'carepita_a11y_line_wide_v2';
+const STORAGE_COLOR_MODE = 'carepita_a11y_color_mode_v2';
+const STORAGE_FONT_FAMILY = 'carepita_a11y_font_family_v2';
+
+export type A11yTextScale = 'standard' | 'large' | 'xl';
+export type A11yColorMode = 'standard' | 'high-contrast' | 'cud';
+export type A11yFontFamily = 'standard' | 'rounded' | 'mincho';
 
 interface ScreenReaderEntry {
   id: string;
@@ -28,6 +34,14 @@ interface SpeechContextValue {
   speechSupported: boolean;
   speechRate: number;
   setSpeechRate: (rate: number) => void;
+  textScale: A11yTextScale;
+  setTextScale: (scale: A11yTextScale) => void;
+  wideLeading: boolean;
+  setWideLeading: (enabled: boolean) => void;
+  colorMode: A11yColorMode;
+  setColorMode: (mode: A11yColorMode) => void;
+  fontFamily: A11yFontFamily;
+  setFontFamily: (font: A11yFontFamily) => void;
   highContrast: boolean;
   setHighContrast: (enabled: boolean) => void;
   largeText: boolean;
@@ -75,20 +89,45 @@ export const SpeechProvider: React.FC<{ children: React.ReactNode }> = ({
       return 1.0;
     }
   });
-  const [highContrast, setHighContrastState] = useState<boolean>(() => {
+
+  const [textScale, setTextScaleState] = useState<A11yTextScale>(() => {
     try {
-      return window.localStorage.getItem(STORAGE_HIGH_CONTRAST) === '1';
+      const v = window.localStorage.getItem(STORAGE_TEXT_SCALE);
+      if (v === 'large' || v === 'xl') return v;
+      return 'standard';
+    } catch {
+      return 'standard';
+    }
+  });
+
+  const [wideLeading, setWideLeadingState] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(STORAGE_LINE_HEIGHT_WIDE) === '1';
     } catch {
       return false;
     }
   });
-  const [largeText, setLargeTextState] = useState<boolean>(() => {
+
+  const [colorMode, setColorModeState] = useState<A11yColorMode>(() => {
     try {
-      return window.localStorage.getItem(STORAGE_LARGE_TEXT) === '1';
+      const v = window.localStorage.getItem(STORAGE_COLOR_MODE);
+      if (v === 'high-contrast' || v === 'cud') return v;
+      return 'standard';
     } catch {
-      return false;
+      return 'standard';
     }
   });
+
+  const [fontFamily, setFontFamilyState] = useState<A11yFontFamily>(() => {
+    try {
+      const v = window.localStorage.getItem(STORAGE_FONT_FAMILY);
+      if (v === 'rounded' || v === 'mincho') return v;
+      return 'standard';
+    } catch {
+      return 'standard';
+    }
+  });
+
   const [liveAnnouncement, setLiveAnnouncement] = useState<string>('');
 
   const sessionTokenRef = useRef<number>(0);
@@ -104,7 +143,6 @@ export const SpeechProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const announce = useCallback((message: string) => {
-    // 同じ文字列連続時にもスクリーンリーダーが再読できるよう空白調整で切替
     setLiveAnnouncement('');
     window.requestAnimationFrame(() => {
       setLiveAnnouncement(message);
@@ -255,52 +293,102 @@ export const SpeechProvider: React.FC<{ children: React.ReactNode }> = ({
     [announce]
   );
 
+  const setTextScale = useCallback(
+    (scale: A11yTextScale) => {
+      setTextScaleState(scale);
+      try {
+        window.localStorage.setItem(STORAGE_TEXT_SCALE, scale);
+      } catch {
+        // ignore
+      }
+      const label =
+        scale === 'xl' ? '特大' : scale === 'large' ? '大きめ' : '標準';
+      announce(`文字サイズを「${label}」に設定しました。`);
+    },
+    [announce]
+  );
+
+  const setWideLeading = useCallback(
+    (enabled: boolean) => {
+      setWideLeadingState(enabled);
+      try {
+        window.localStorage.setItem(STORAGE_LINE_HEIGHT_WIDE, enabled ? '1' : '0');
+      } catch {
+        // ignore
+      }
+      announce(enabled ? '行間を広めに設定しました。' : '行間を標準に戻しました。');
+    },
+    [announce]
+  );
+
+  const setColorMode = useCallback(
+    (mode: A11yColorMode) => {
+      setColorModeState(mode);
+      try {
+        window.localStorage.setItem(STORAGE_COLOR_MODE, mode);
+      } catch {
+        // ignore
+      }
+      const label =
+        mode === 'high-contrast'
+          ? '高コントラスト表示'
+          : mode === 'cud'
+          ? '色覚サポート（青・オレンジ配色）'
+          : '標準配色';
+      announce(`配色設定を「${label}」に切り替えました。`);
+    },
+    [announce]
+  );
+
+  const setFontFamily = useCallback(
+    (font: A11yFontFamily) => {
+      setFontFamilyState(font);
+      try {
+        window.localStorage.setItem(STORAGE_FONT_FAMILY, font);
+      } catch {
+        // ignore
+      }
+      const label =
+        font === 'rounded'
+          ? '読みやすい丸ゴシック'
+          : font === 'mincho'
+          ? '明朝体'
+          : '標準ゴシック';
+      announce(`書体を「${label}」に設定しました。`);
+    },
+    [announce]
+  );
+
+  const highContrast = colorMode === 'high-contrast';
   const setHighContrast = useCallback(
     (enabled: boolean) => {
-      setHighContrastState(enabled);
-      try {
-        window.localStorage.setItem(STORAGE_HIGH_CONTRAST, enabled ? '1' : '0');
-      } catch {
-        // ignore
-      }
-      announce(
-        enabled
-          ? '高コントラスト・太枠フォーカス表示をオンにしました。'
-          : '高コントラスト表示をオフにしました。'
-      );
+      setColorMode(enabled ? 'high-contrast' : 'standard');
     },
-    [announce]
+    [setColorMode]
   );
 
+  const largeText = textScale !== 'standard';
   const setLargeText = useCallback(
     (enabled: boolean) => {
-      setLargeTextState(enabled);
-      try {
-        window.localStorage.setItem(STORAGE_LARGE_TEXT, enabled ? '1' : '0');
-      } catch {
-        // ignore
-      }
-      announce(
-        enabled
-          ? '文字サイズを大きく設定しました。'
-          : '文字サイズを標準に戻しました。'
-      );
+      setTextScale(enabled ? 'large' : 'standard');
     },
-    [announce]
+    [setTextScale]
   );
 
-  // 高コントラスト・文字サイズクラスのDOM反映
+  // DOM クラス反映
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    document.documentElement.classList.toggle('a11y-high-contrast', highContrast);
-  }, [highContrast]);
+    const root = document.documentElement;
+    root.classList.toggle('a11y-large-text', textScale === 'large');
+    root.classList.toggle('a11y-xl-text', textScale === 'xl');
+    root.classList.toggle('a11y-wide-leading', wideLeading);
+    root.classList.toggle('a11y-high-contrast', colorMode === 'high-contrast');
+    root.classList.toggle('a11y-color-cud', colorMode === 'cud');
+    root.classList.toggle('a11y-font-rounded', fontFamily === 'rounded');
+    root.classList.toggle('a11y-font-mincho', fontFamily === 'mincho');
+  }, [textScale, wideLeading, colorMode, fontFamily]);
 
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    document.documentElement.classList.toggle('a11y-large-text', largeText);
-  }, [largeText]);
-
-  // 画面遷移時：読み上げ停止 + document.title更新 + スクリーンリーダー向け画面遷移アナウンス
+  // 画面遷移時：読み上げ停止 + document.title更新 + アナウンス
   useEffect(() => {
     const title = getViewTitleForAnnouncement(currentView);
     if (typeof document !== 'undefined') {
@@ -314,7 +402,7 @@ export const SpeechProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [currentView, stop, announce]);
 
-  // グローバルキーボードショートカット（Alt+R: 画面読み上げ / Alt+S: 読み上げ停止）
+  // キーボードショートカット (Alt+R / Alt+S)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.altKey) return;
@@ -331,7 +419,6 @@ export const SpeechProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [readCurrentScreen, stop]);
 
-  // アンマウント時のクリーンアップ
   useEffect(() => {
     return () => {
       clearFallbackTimer();
@@ -353,6 +440,14 @@ export const SpeechProvider: React.FC<{ children: React.ReactNode }> = ({
         speechSupported,
         speechRate,
         setSpeechRate,
+        textScale,
+        setTextScale,
+        wideLeading,
+        setWideLeading,
+        colorMode,
+        setColorMode,
+        fontFamily,
+        setFontFamily,
         highContrast,
         setHighContrast,
         largeText,

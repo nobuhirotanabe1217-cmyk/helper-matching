@@ -5,22 +5,32 @@ import {
   AuditLogEntry,
   AuthSession,
   AuthUserRole,
+  BillingCycle,
   CaseManagementStatus,
   ChatMessage,
+  ChatMessageKind,
   ChatRequest,
+  CoordinatorProfile,
   DisclosureConsent,
+  DisclosureHistoryEntry,
+  DisclosureStage,
   MatchingInteraction,
   PendingMfaChallenge,
   ProviderAcceptanceStatus,
   ProviderAccountApprovalStatus,
   ProviderAvailability,
+  ProviderBranch,
   ProviderCapabilities,
   ProviderPaymentSummary,
   ProviderProfile,
   ProviderReactionStatus,
+  ProviderStaffMember,
   ProviderSubscription,
+  ScheduleCandidateSlot,
+  SharedCaseToCoordinator,
   SubscriptionPlanDefinition,
   SubscriptionPlanId,
+  SupportDetailPolicy,
   UserPII,
   UserPreferences,
   UserProfile,
@@ -33,15 +43,25 @@ import {
   verifyPasswordLogin,
 } from '../utils/auth';
 import {
+  addMonthsToIso,
+  getCurrentYearMonth,
+  getNowDateTime,
+  getTodayIso,
+} from '../utils/date';
+import {
   INITIAL_AUDIT_LOGS,
   INITIAL_CHAT_REQUESTS,
+  INITIAL_COORDINATORS,
+  INITIAL_CREDENTIALS,
   INITIAL_DISCLOSURES,
+  INITIAL_DISCLOSURE_HISTORY,
   INITIAL_INTERACTIONS,
   INITIAL_MESSAGES,
   INITIAL_PROVIDER_AVAILABILITY,
   INITIAL_PROVIDER_CAPABILITIES,
   INITIAL_PROVIDER_PROFILES,
   INITIAL_PROVIDER_SUBSCRIPTIONS,
+  INITIAL_SHARED_CASES,
   INITIAL_USER_NEEDS,
   INITIAL_USER_PII,
   INITIAL_USER_PREFERENCES,
@@ -52,14 +72,16 @@ import {
   applyToggleFavoriteInteraction,
   applyUpdateFavoriteNoteInteraction,
 } from '../utils/favorites';
+import { migratePersistedState } from '../utils/migration';
 import { RateLimitState, SecurityController } from '../utils/security';
 import {
   DEFAULT_SUBSCRIPTION_PLANS,
   getProviderPlanDefinition,
   isPaidPlanActive,
+  verifyProviderChatAccess,
 } from '../utils/subscription';
 
-export type AppRole = 'guest' | 'user' | 'provider' | 'admin';
+export type AppRole = 'guest' | 'user' | 'provider' | 'coordinator' | 'admin';
 
 export type AppView =
   | 'top'
@@ -77,6 +99,7 @@ export type AppView =
   | 'provider-search'
   | 'provider-user-detail'
   | 'provider-billing'
+  | 'coordinator-dashboard'
   | 'admin-security'
   | 'chat'
   | 'google-drive';
@@ -98,6 +121,8 @@ export interface NewUserRegistrationInput {
   supportCategory: UserSupportNeeds['supportCategory'];
   careNeeds: UserSupportNeeds['careNeeds'];
   physicalConditions: UserSupportNeeds['physicalConditions'];
+  communicationConsiderations: UserSupportNeeds['communicationConsiderations'];
+  dislikesAndAccommodations: string;
   helperGenderPreference: UserPreferences['helperGenderPreference'];
   isGenderPreferenceStrict: boolean;
   preferredDays: UserPreferences['preferredDays'];
@@ -110,6 +135,7 @@ export interface NewUserRegistrationInput {
 
 export interface NewProviderRegistrationInput {
   name: string;
+  designatedNumber: string;
   email: string;
   phoneNumber?: string;
   contactPersonName: string;
@@ -117,10 +143,21 @@ export interface NewProviderRegistrationInput {
   coverageAreas: string[];
   serviceTypes: ProviderProfile['serviceTypes'];
   planId: SubscriptionPlanId;
+  billingCycle?: BillingCycle;
   businessDaysHours: string;
   introduction: string;
+  appealMessage: string;
   supportedCareItems: ProviderCapabilities['supportedCareItems'];
   supportedDisabilities: ProviderCapabilities['supportedDisabilities'];
+  supportsBehavioralDisorder: SupportDetailPolicy;
+  behavioralDisorderNote?: string;
+  supportsMedicalCare: SupportDetailPolicy;
+  medicalCareRangeText?: string;
+  supportsEpilepsyResponse: SupportDetailPolicy;
+  epilepsyResponseNote?: string;
+  supportedCommunicationMethods: string[];
+  supportsTransport: boolean;
+  transportRangeText?: string;
   supportsWheelchairTransfer: boolean;
   supportsTwoPersonCare: boolean;
   helperGenderPolicy: ProviderCapabilities['helperGenderPolicy'];
@@ -135,11 +172,19 @@ export interface NewProviderRegistrationInput {
   mfaMethod?: 'email' | 'sms';
 }
 
+export interface NewCoordinatorRegistrationInput {
+  name: string;
+  officeName: string;
+  area: string;
+  email?: string;
+}
+
 interface AppStateContextValue {
   role: AppRole;
   currentView: AppView;
   activeUserId: string;
   activeProviderId: string;
+  activeCoordinatorId: string;
   selectedProviderIdForDetail: string | null;
   selectedUserIdForDetail: string | null;
   activeChatPartnerId: string | null;
@@ -157,6 +202,12 @@ interface AppStateContextValue {
   interactions: MatchingInteraction[];
   messages: ChatMessage[];
   disclosures: DisclosureConsent[];
+  disclosureHistory: DisclosureHistoryEntry[];
+
+  // 相談支援専門員（無料ロール）
+  coordinators: CoordinatorProfile[];
+  sharedCases: SharedCaseToCoordinator[];
+  currentCoordinator: CoordinatorProfile | undefined;
 
   // サブスクリプション＆チャット開始申請
   subscriptionPlans: SubscriptionPlanDefinition[];
@@ -168,7 +219,7 @@ interface AppStateContextValue {
   showChatUpgradeModal: boolean;
   setShowChatUpgradeModal: (show: boolean) => void;
 
-  // セキュリティ・監査ログ・セッション (指示書 3, 7, 8)
+  // セキュリティ・監査ログ・セッション
   session: AuthSession;
   auditLogs: AuditLogEntry[];
   rateLimitMap: Record<string, RateLimitState>;
@@ -228,6 +279,16 @@ interface AppStateContextValue {
     input: NewProviderRegistrationInput,
     targetView?: AppView
   ) => void;
+  registerCoordinator: (
+    input: NewCoordinatorRegistrationInput,
+    navigateToWorkspace?: boolean
+  ) => CoordinatorProfile;
+  startAsCoordinatorDemo: (coordinatorId?: string) => void;
+  shareUserWithCoordinator: (
+    userId: string,
+    coordinatorId: string,
+    noteToCoordinator?: string
+  ) => void;
   loginByEmail: (email: string) => { success: boolean; message: string };
   navigateTo: (view: AppView) => void;
   startAsUserDemo: (userId?: string, targetView?: AppView) => void;
@@ -243,11 +304,12 @@ interface AppStateContextValue {
   setUserWizardStep: (step: number) => void;
   setProviderWizardStep: (step: number) => void;
 
-  // Subscription & Chat Request actions
+  // Subscription, Branches, Staff & Chat Request actions
   subscribeProviderToPlan: (
     providerId: string,
     planId: SubscriptionPlanId,
-    paymentSummary?: ProviderPaymentSummary
+    paymentSummary?: ProviderPaymentSummary,
+    billingCycle?: BillingCycle
   ) => void;
   updateProviderPaymentMethod: (
     providerId: string,
@@ -262,12 +324,24 @@ interface AppStateContextValue {
     providerId: string,
     status: ProviderAccountApprovalStatus
   ) => void;
+  markProviderUpdatedToday: (providerId: string) => void;
+  toggleProviderMatchFilter: (providerId: string) => void;
+  addProviderStaffMember: (
+    providerId: string,
+    staff: Omit<ProviderStaffMember, 'id'>
+  ) => void;
+  removeProviderStaffMember: (providerId: string, staffId: string) => void;
+  addProviderBranch: (
+    providerId: string,
+    branch: Omit<ProviderBranch, 'id'>
+  ) => void;
+  removeProviderBranch: (providerId: string, branchId: string) => void;
   sendChatRequest: (
     userId: string,
     providerId: string,
     initiatedBy: 'provider' | 'user',
     initialMessage: string
-  ) => void;
+  ) => { ok: boolean; message?: string };
   respondToChatRequest: (
     requestId: string,
     decision: 'approved' | 'declined'
@@ -278,7 +352,7 @@ interface AppStateContextValue {
     caseStatus: CaseManagementStatus
   ) => void;
 
-  // Security & Data mutations
+  // Security, Chat & 3-Stage Disclosure mutations
   saveUserBundle: (bundle: FullUserBundle, pii?: Partial<UserPII>) => void;
   saveProviderBundle: (bundle: FullProviderBundle) => void;
   updateProviderAcceptanceStatus: (
@@ -301,51 +375,103 @@ interface AppStateContextValue {
     userId: string,
     providerId: string,
     senderType: 'user' | 'provider',
-    text: string
+    text: string,
+    options?: {
+      messageKind?: ChatMessageKind;
+      proposedSlots?: ScheduleCandidateSlot[];
+      confirmedSlot?: ScheduleCandidateSlot;
+      confirmedKind?: 'interview' | 'visit';
+    }
   ) => void;
+  confirmInterviewOrVisitSchedule: (params: {
+    userId: string;
+    providerId: string;
+    confirmedBy: 'user' | 'provider';
+    kind: 'interview' | 'visit';
+    slot: ScheduleCandidateSlot;
+  }) => void;
   markMessagesRead: (
     userId: string,
     providerId: string,
     viewerType: 'user' | 'provider'
   ) => void;
+  grantStage2Disclosure: (userId: string, providerId: string) => void;
   grantStage3Disclosure: (
     userId: string,
     providerId: string,
     allowPiiContactAccess?: boolean
+  ) => { ok: boolean; message?: string };
+  revokeDisclosureToStage: (
+    userId: string,
+    providerId: string,
+    targetStage?: 1 | 2
   ) => void;
   revokeStage3Disclosure: (userId: string, providerId: string) => void;
   getDisclosureStage: (userId: string, providerId: string) => DisclosureConsent;
   resetDemoData: () => void;
+  loadDemoData: () => void;
   toggleMfaSetting: () => void;
   simulateRateLimitTrigger: () => void;
 }
 
-const STORAGE_KEY = 'carepita_clean_blank_v1';
+const STORAGE_KEY = 'carepita_business_state_v2';
+const LEGACY_STORAGE_KEY = 'carepita_clean_blank_v1';
+const RESET_FLAG_KEY = 'carepita_is_reset_v1';
 
 const AppStateContext = createContext<AppStateContextValue | null>(null);
+
+function loadInitialPersistedOrSeed() {
+  try {
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ||
+      localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (raw) {
+      return migratePersistedState(JSON.parse(raw));
+    }
+    if (localStorage.getItem(RESET_FLAG_KEY) === '1') {
+      return null;
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  return {
+    userPIIList: INITIAL_USER_PII,
+    userProfiles: INITIAL_USER_PROFILES,
+    userNeeds: INITIAL_USER_NEEDS,
+    userPreferences: INITIAL_USER_PREFERENCES,
+    providerProfiles: INITIAL_PROVIDER_PROFILES,
+    providerCapabilities: INITIAL_PROVIDER_CAPABILITIES,
+    providerAvailabilities: INITIAL_PROVIDER_AVAILABILITY,
+    interactions: INITIAL_INTERACTIONS,
+    messages: INITIAL_MESSAGES,
+    disclosures: INITIAL_DISCLOSURES,
+    disclosureHistory: INITIAL_DISCLOSURE_HISTORY,
+    coordinators: INITIAL_COORDINATORS,
+    sharedCases: INITIAL_SHARED_CASES,
+    auditLogs: INITIAL_AUDIT_LOGS,
+    subscriptionPlans: DEFAULT_SUBSCRIPTION_PLANS,
+    providerSubscriptions: INITIAL_PROVIDER_SUBSCRIPTIONS,
+    chatRequests: INITIAL_CHAT_REQUESTS,
+    accountCredentials: INITIAL_CREDENTIALS,
+  };
+}
 
 export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const loadSaved = () => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {
-      // ignore
-    }
-    return null;
-  };
-
-  const saved = loadSaved();
+  const [initialData] = useState(() => loadInitialPersistedOrSeed());
 
   const [role, setRole] = useState<AppRole>('guest');
   const [currentView, setCurrentView] = useState<AppView>('top');
   const [activeUserId, setActiveUserId] = useState<string>(
-    saved?.userProfiles?.[0]?.id || ''
+    initialData?.userProfiles?.[0]?.id || ''
   );
   const [activeProviderId, setActiveProviderId] = useState<string>(
-    saved?.providerProfiles?.[0]?.id || ''
+    initialData?.providerProfiles?.[0]?.id || ''
+  );
+  const [activeCoordinatorId, setActiveCoordinatorId] = useState<string>(
+    initialData?.coordinators?.[0]?.id || ''
   );
   const [selectedProviderIdForDetail, setSelectedProviderIdForDetail] =
     useState<string | null>(null);
@@ -360,9 +486,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   const [securityAlertMessage, setSecurityAlertMessage] = useState<string | null>(
     null
   );
-  const [rateLimitMap, setRateLimitMap] = useState<Record<string, RateLimitState>>(
-    {}
-  );
+  const [rateLimitMap, setRateLimitMap] = useState<
+    Record<string, RateLimitState>
+  >({});
   const [showChatUpgradeModal, setShowChatUpgradeModal] =
     useState<boolean>(false);
   const [registerTab, setRegisterTab] = useState<'user' | 'provider'>('user');
@@ -376,66 +502,73 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     null
   );
 
-  // 初期状態はすべて「0件（まっさらな状態）」からスタート
+  // 永続化データ群
   const [userPIIList, setUserPIIList] = useState<UserPII[]>(
-    saved?.userPIIList || []
+    initialData?.userPIIList || []
   );
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(
-    saved?.userProfiles || []
+    initialData?.userProfiles || []
   );
   const [userNeeds, setUserNeeds] = useState<UserSupportNeeds[]>(
-    saved?.userNeeds || []
+    initialData?.userNeeds || []
   );
   const [userPreferences, setUserPreferences] = useState<UserPreferences[]>(
-    saved?.userPreferences || []
+    initialData?.userPreferences || []
   );
   const [providerProfiles, setProviderProfiles] = useState<ProviderProfile[]>(
-    saved?.providerProfiles || []
+    initialData?.providerProfiles || []
   );
   const [providerCapabilities, setProviderCapabilities] = useState<
     ProviderCapabilities[]
-  >(saved?.providerCapabilities || []);
+  >(initialData?.providerCapabilities || []);
   const [providerAvailabilities, setProviderAvailabilities] = useState<
     ProviderAvailability[]
-  >(saved?.providerAvailabilities || []);
+  >(initialData?.providerAvailabilities || []);
   const [interactions, setInteractions] = useState<MatchingInteraction[]>(
-    saved?.interactions || []
+    initialData?.interactions || []
   );
   const [messages, setMessages] = useState<ChatMessage[]>(
-    saved?.messages || []
+    initialData?.messages || []
   );
   const [disclosures, setDisclosures] = useState<DisclosureConsent[]>(
-    saved?.disclosures || []
+    initialData?.disclosures || []
+  );
+  const [disclosureHistory, setDisclosureHistory] = useState<
+    DisclosureHistoryEntry[]
+  >(initialData?.disclosureHistory || []);
+  const [coordinators, setCoordinators] = useState<CoordinatorProfile[]>(
+    initialData?.coordinators || []
+  );
+  const [sharedCases, setSharedCases] = useState<SharedCaseToCoordinator[]>(
+    initialData?.sharedCases || []
   );
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(
-    saved?.auditLogs || []
+    initialData?.auditLogs || []
   );
   const [subscriptionPlans, setSubscriptionPlans] = useState<
     SubscriptionPlanDefinition[]
-  >(saved?.subscriptionPlans || DEFAULT_SUBSCRIPTION_PLANS);
+  >(initialData?.subscriptionPlans || DEFAULT_SUBSCRIPTION_PLANS);
   const [providerSubscriptions, setProviderSubscriptions] = useState<
     ProviderSubscription[]
-  >(saved?.providerSubscriptions || []);
+  >(initialData?.providerSubscriptions || []);
   const [chatRequests, setChatRequests] = useState<ChatRequest[]>(
-    saved?.chatRequests || []
+    initialData?.chatRequests || []
   );
   const [accountCredentials, setAccountCredentials] = useState<
     AccountCredential[]
-  >(saved?.accountCredentials || []);
+  >(initialData?.accountCredentials || []);
 
-  // 認証セッション (RBAC)
-  const [session, setSession] = useState<AuthSession>(() => {
-    return {
-      userId: 'guest',
-      role: 'user',
-      email: '',
-      mfaEnabled: true,
-      mfaVerified: false,
-      ipAddress: '192.168.1.10',
-      lastActive: '2026-11-12 12:00',
-      accountStatus: 'active',
-    };
-  });
+  // 認証セッション
+  const [session, setSession] = useState<AuthSession>(() => ({
+    userId: 'guest',
+    role: 'user',
+    email: '',
+    mfaEnabled: true,
+    mfaVerified: false,
+    ipAddress: '192.168.1.10',
+    lastActive: getNowDateTime(),
+    accountStatus: 'active',
+  }));
 
   // Persist
   useEffect(() => {
@@ -453,6 +586,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
           interactions,
           messages,
           disclosures,
+          disclosureHistory,
+          coordinators,
+          sharedCases,
           auditLogs,
           subscriptionPlans,
           providerSubscriptions,
@@ -474,6 +610,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     interactions,
     messages,
     disclosures,
+    disclosureHistory,
+    coordinators,
+    sharedCases,
     auditLogs,
     subscriptionPlans,
     providerSubscriptions,
@@ -491,6 +630,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       actorId:
         role === 'provider'
           ? activeProviderId || 'provider'
+          : role === 'coordinator'
+          ? activeCoordinatorId || 'coordinator'
           : role === 'admin'
           ? 'admin-001'
           : activeUserId || 'user',
@@ -546,6 +687,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       availability: INITIAL_PROVIDER_AVAILABILITY[0],
     };
 
+  const currentCoordinator =
+    coordinators.find((c) => c.id === activeCoordinatorId) || coordinators[0];
+
   const getProviderSubscription = (
     providerId: string
   ): ProviderSubscription => {
@@ -556,8 +700,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     return {
       providerId,
       planId: 'free',
+      billingCycle: 'monthly',
       status: 'active',
-      startedAt: '2026-11-12',
+      startedAt: getTodayIso(),
       nextRenewalDate: '-',
       accountApprovalStatus: 'approved',
     };
@@ -582,15 +727,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     );
   };
 
-  /**
-   * PIIへのアクセス検証 (サーバー権限ガードの模倣)
-   */
   const getPiiIfPermitted = (
     targetUserId: string
   ): { permitted: boolean; data?: UserPII; reason: string } => {
     const actorId =
       role === 'provider'
         ? activeProviderId
+        : role === 'coordinator'
+        ? activeCoordinatorId
         : role === 'admin'
         ? 'admin-001'
         : activeUserId;
@@ -641,7 +785,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       email: `${targetId}@demo.local`,
       mfaEnabled: true,
       mfaVerified: true,
-      lastActive: '2026-11-12 12:00',
+      lastActive: getNowDateTime(),
       accountStatus: 'active',
     });
     addAuditLog('AUTH_LOGIN', `利用者セッション開始 (${targetId})`);
@@ -664,12 +808,134 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       email: `${targetId}@provider.local`,
       mfaEnabled: true,
       mfaVerified: true,
-      lastActive: '2026-11-12 12:00',
+      lastActive: getNowDateTime(),
       accountStatus: 'active',
     });
     addAuditLog('AUTH_LOGIN', `事業所セッション開始 (${targetId})`);
     setProviderWizardStep(1);
     navigateTo(targetView || 'provider-dashboard');
+  };
+
+  const registerCoordinator = (
+    input: NewCoordinatorRegistrationInput,
+    navigateToWorkspace: boolean = true
+  ): CoordinatorProfile => {
+    const newNum = coordinators.length + 1;
+    const newCoord: CoordinatorProfile = {
+      id: `coord-${String(newNum).padStart(3, '0')}-${Date.now().toString().slice(-4)}`,
+      name: input.name.trim(),
+      officeName: input.officeName.trim(),
+      area: input.area.trim() || '杉並区',
+      email: input.email?.trim() || '',
+      registeredAt: getTodayIso(),
+    };
+    setCoordinators((prev) => [newCoord, ...prev]);
+    setActiveCoordinatorId(newCoord.id);
+    setRole('coordinator');
+    setSession({
+      userId: newCoord.id,
+      role: 'coordinator',
+      email: newCoord.email || 'coordinator@carepita.local',
+      mfaEnabled: false,
+      mfaVerified: true,
+      lastActive: getNowDateTime(),
+      accountStatus: 'active',
+    });
+    addAuditLog(
+      'AUTH_LOGIN',
+      `相談支援専門員 簡易登録・開始 (${newCoord.officeName} / ${newCoord.name})`
+    );
+    setRegistrationBanner(
+      `相談支援専門員「${newCoord.name}（${newCoord.officeName}）」として利用を開始しました（完全無料）。`
+    );
+    if (navigateToWorkspace) {
+      navigateTo('coordinator-dashboard');
+    }
+    return newCoord;
+  };
+
+  const startAsCoordinatorDemo = (coordinatorId?: string) => {
+    const target =
+      (coordinatorId && coordinators.find((c) => c.id === coordinatorId)) ||
+      coordinators[0] ||
+      INITIAL_COORDINATORS[0];
+
+    if (!coordinators.some((c) => c.id === target.id)) {
+      setCoordinators([target]);
+    }
+    setActiveCoordinatorId(target.id);
+    setRole('coordinator');
+    setSession({
+      userId: target.id,
+      role: 'coordinator',
+      email: target.email || 'coordinator@carepita.local',
+      mfaEnabled: false,
+      mfaVerified: true,
+      lastActive: getNowDateTime(),
+      accountStatus: 'active',
+    });
+    addAuditLog('AUTH_LOGIN', `相談支援専門員セッション開始 (${target.id})`);
+    navigateTo('coordinator-dashboard');
+  };
+
+  const shareUserWithCoordinator = (
+    userId: string,
+    coordinatorId: string,
+    noteToCoordinator?: string
+  ) => {
+    const nowStr = getNowDateTime();
+    const coord =
+      coordinators.find((c) => c.id === coordinatorId) || coordinators[0];
+    if (!coord) return;
+
+    setSharedCases((prev) => {
+      const existing = prev.find(
+        (sc) => sc.userId === userId && sc.coordinatorId === coord.id
+      );
+      if (existing) {
+        return prev.map((sc) =>
+          sc.id === existing.id
+            ? {
+                ...sc,
+                sharedAt: nowStr,
+                noteToCoordinator:
+                  noteToCoordinator?.trim() || sc.noteToCoordinator,
+              }
+            : sc
+        );
+      }
+      return [
+        {
+          id: `share-${Date.now()}`,
+          userId,
+          coordinatorId: coord.id,
+          sharedAt: nowStr,
+          noteToCoordinator:
+            noteToCoordinator?.trim() ||
+            '希望条件・特性プロフィールの確認と事業所探しの相談をお願いします。',
+        },
+        ...prev,
+      ];
+    });
+
+    setUserProfiles((prev) =>
+      prev.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              sharedCoordinatorIds: Array.from(
+                new Set([...(u.sharedCoordinatorIds || []), coord.id])
+              ),
+            }
+          : u
+      )
+    );
+
+    addAuditLog(
+      'CONSENT_GRANTED',
+      `利用者が担当相談支援専門員（${coord.officeName} / ${coord.name}）に希望条件と特性プロフィールを共有`,
+      coord.id
+    );
   };
 
   const startAsAdminDemo = () => {
@@ -680,7 +946,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       email: 'security.admin@matching.system.local',
       mfaEnabled: true,
       mfaVerified: true,
-      lastActive: '2026-11-09 09:10',
+      lastActive: getNowDateTime(),
       accountStatus: 'active',
     });
     addAuditLog(
@@ -717,8 +983,10 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   ) => {
     const newNum = userProfiles.length + 1;
     const padded = String(newNum).padStart(3, '0');
-    const newId = `user-${padded}`;
+    const newId = `user-${padded}-${Date.now().toString().slice(-3)}`;
     const newCode = `利用希望者${padded}`;
+    const today = getTodayIso();
+    const nowDt = getNowDateTime();
 
     const newProfile: UserProfile = {
       id: newId,
@@ -729,14 +997,16 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       city: input.city,
       registrantRole: input.registrantRole,
       certificateStatus: input.certificateStatus,
-      registeredAt: '2026年11月（新規登録）',
+      registeredAt: `${today}（新規登録）`,
       isNewArrival: true,
       briefSummaryForFreePlan: `${input.city}にて${input.desiredServices.join('・')}（${input.preferredDays.join('・')}曜）を希望`,
+      familyShareToken: `fam_${newId}`,
+      sharedCoordinatorIds: [],
       disclosableInfo: {
         contactPersonRole: `${input.registrantRole}（${input.nickname}）`,
         nearestStationArea: input.nearestStationArea,
         preferredContactMethod: 'サイト内メッセージ',
-        consultationSupportOffice: '担当相談支援事業所（同意後に詳細開示）',
+        consultationSupportOffice: '担当相談支援事業所（必要時に共有可能）',
         detailedScheduleNote: `${input.preferredDays.join('・')}曜 / ${input.preferredTimeSlots.join('・')}`,
       },
     };
@@ -750,8 +1020,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       careNeeds: input.careNeeds,
       essentialCareNeeds: input.careNeeds.slice(0, 3),
       physicalConditions: input.physicalConditions,
-      communicationConsiderations: ['言葉でのコミュニケーションが可能'],
+      communicationConsiderations:
+        input.communicationConsiderations.length > 0
+          ? input.communicationConsiderations
+          : ['言葉でのコミュニケーションが可能'],
       communicationFreeText: input.freeMessageToProvider,
+      dislikesAndAccommodations: input.dislikesAndAccommodations,
     };
 
     const newPrefs: UserPreferences = {
@@ -775,7 +1049,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       email: input.email,
       postalCode: '166-0000',
       detailedAddress: input.detailedAddress,
-      updatedAt: '2026-11-12 12:00',
+      updatedAt: nowDt,
     };
 
     const mfaEnabled = input.mfaEnabled ?? true;
@@ -789,7 +1063,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       password: input.password || 'CarePita2026!',
       mfaEnabled,
       mfaMethod,
-      createdAt: '2026-11-14 12:00',
+      createdAt: nowDt,
     };
 
     setUserProfiles((prev) => [newProfile, ...prev]);
@@ -806,14 +1080,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       mfaEnabled,
       mfaVerified: mfaEnabled,
       mfaMethod,
-      lastActive: '2026-11-14 12:00',
+      lastActive: nowDt,
       accountStatus: 'active',
     });
     setUserWizardStep(1);
     setLastRegisteredRole('user');
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `新規利用者アカウント登録完了 (${newCode} / 2段階認証: ${mfaEnabled ? mfaMethod : 'off'})`
+      `新規利用者アカウント登録完了 (${newCode} / 特性プロフィール含む / 2FA: ${mfaEnabled ? mfaMethod : 'off'})`
     );
     if (targetView === 'registration-complete') {
       setRegistrationBanner(null);
@@ -831,30 +1105,74 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   ) => {
     const newNum = providerProfiles.length + 1;
     const padded = String(newNum).padStart(3, '0');
-    const newId = `prov-${padded}`;
+    const newId = `prov-${padded}-${Date.now().toString().slice(-3)}`;
+    const today = getTodayIso();
+    const nowDt = getNowDateTime();
+    const cycle: BillingCycle = input.billingCycle || 'monthly';
 
     const newProfile: ProviderProfile = {
       id: newId,
       name: input.name,
+      designatedNumber: input.designatedNumber,
+      updatedAt: today,
       locationCity: input.locationCity,
       serviceTypes: input.serviceTypes,
       introduction: input.introduction,
       features: [
-        '新規登録事業所',
-        '丁寧な事前面談',
+        '指定事業所番号 登録済み',
+        '受入条件カード掲載',
         `${input.locationCity}拠点`,
       ],
       contactPersonName: input.contactPersonName,
       coverageAreas: input.coverageAreas,
       businessDaysHours: input.businessDaysHours,
       messageFromProvider: input.acceptableConditionsNote,
+      appealMessage:
+        input.appealMessage.trim() ||
+        input.acceptableConditionsNote.slice(0, 60) ||
+        'ご希望条件に合わせて丁寧に受け入れ相談を行います。',
+      filterOnlyMatchingRequests: false,
+      staffMembers: [
+        {
+          id: `st-${Date.now()}`,
+          name: input.contactPersonName,
+          roleTitle: '管理者・サービス提供責任者',
+          qualifications: '介護福祉士等',
+          active: true,
+        },
+      ],
+      branches: [
+        {
+          id: `br-${Date.now()}`,
+          name: `${input.name}（本店）`,
+          designatedNumber: input.designatedNumber,
+          city: input.locationCity,
+          addressNote: `${input.locationCity}エリア`,
+          serviceTypes: input.serviceTypes,
+          isMain: true,
+        },
+      ],
     };
 
     const newCaps: ProviderCapabilities = {
       providerId: newId,
       supportedCareItems: input.supportedCareItems,
       supportedDisabilities: input.supportedDisabilities,
-      medicalCareRangeText: '服薬確認・見守り・医療的配慮の相談可',
+      supportsBehavioralDisorder: input.supportsBehavioralDisorder,
+      behavioralDisorderNote: input.behavioralDisorderNote || '',
+      supportsMedicalCare: input.supportsMedicalCare,
+      medicalCareRangeText:
+        input.medicalCareRangeText?.trim() || '服薬確認・見守り（詳細は面談時確認）',
+      supportsEpilepsyResponse: input.supportsEpilepsyResponse,
+      epilepsyResponseNote: input.epilepsyResponseNote || '',
+      supportedCommunicationMethods:
+        input.supportedCommunicationMethods.length > 0
+          ? input.supportedCommunicationMethods
+          : ['言葉・音声での対話'],
+      supportsTransport: input.supportsTransport,
+      transportRangeText:
+        input.transportRangeText?.trim() ||
+        (input.supportsTransport ? `${input.locationCity}周辺` : '送迎なし'),
       supportsTwoPersonCare: input.supportsTwoPersonCare,
       supportsWheelchairTransfer: input.supportsWheelchairTransfer,
       helperGenderPolicy: input.helperGenderPolicy,
@@ -875,14 +1193,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       providerId: newId,
       acceptanceStatus: input.acceptanceStatus,
       acceptableConditionsNote: input.acceptableConditionsNote,
-      updatedAt: '2026-11-12',
+      updatedAt: today,
       weeklySchedule: allDays.map((d) => {
         const isAvail = input.availableDays.includes(d);
         return {
           day: d,
           available: isAvail,
           timeSlots: isAvail ? input.availableTimeSlots : [],
-          note: isAvail ? '9時〜17時（相談可）' : '対応不可',
+          note: isAvail ? '受入条件カードの通り対応可' : '対応不可',
         };
       }),
     };
@@ -890,9 +1208,13 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     const newSub: ProviderSubscription = {
       providerId: newId,
       planId: input.planId,
+      billingCycle: cycle,
       status: 'active',
-      startedAt: '2026-11-14',
-      nextRenewalDate: input.planId === 'free' ? '-' : '2026-12-14',
+      startedAt: today,
+      nextRenewalDate:
+        input.planId === 'free'
+          ? '-'
+          : addMonthsToIso(today, cycle === 'annual' ? 12 : 1),
       accountApprovalStatus: 'approved',
       paymentSummary: input.planId === 'free' ? undefined : input.paymentSummary,
     };
@@ -908,7 +1230,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       password: input.password || 'CarePita2026!',
       mfaEnabled,
       mfaMethod,
-      createdAt: '2026-11-14 12:00',
+      createdAt: nowDt,
     };
 
     setProviderProfiles((prev) => [newProfile, ...prev]);
@@ -925,20 +1247,20 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       mfaEnabled,
       mfaVerified: mfaEnabled,
       mfaMethod,
-      lastActive: '2026-11-14 12:00',
+      lastActive: nowDt,
       accountStatus: 'active',
     });
     setProviderWizardStep(1);
     setLastRegisteredRole('provider');
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `新規事業所アカウント登録完了 (${newId} / プラン: ${input.planId} / 2段階認証: ${mfaEnabled ? mfaMethod : 'off'})`
+      `新規事業所登録完了 (${newId} / 指定番号:${input.designatedNumber} / プラン:${input.planId})`
     );
     if (targetView === 'registration-complete') {
       setRegistrationBanner(null);
     } else {
       setRegistrationBanner(
-        `事業所「${input.name}」の新規登録が完了しました！`
+        `事業所「${input.name}」（指定事業所番号：${input.designatedNumber}）の新規登録が完了しました！`
       );
     }
     navigateTo(targetView);
@@ -965,7 +1287,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       mfaEnabled: account.mfaEnabled,
       mfaVerified: verifiedMfa,
       mfaMethod: usedMethod || account.mfaMethod,
-      lastActive: '2026-11-14 12:00',
+      lastActive: getNowDateTime(),
       accountStatus: 'active',
     });
     setPendingMfaChallenge(null);
@@ -1156,7 +1478,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       email: '',
       mfaEnabled: true,
       mfaVerified: false,
-      lastActive: '2026-11-14 12:00',
+      lastActive: getNowDateTime(),
       accountStatus: 'active',
     });
     setRegistrationBanner(null);
@@ -1175,7 +1497,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       };
     }
 
-    // 1. 利用者PIIまたはニックネームから検索
     const matchedPii = userPIIList.find(
       (p) => p.email.toLowerCase() === trimmed
     );
@@ -1183,7 +1504,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       const u = userProfiles.find((item) => item.id === matchedPii.userId);
       startAsUserDemo(matchedPii.userId, 'user-dashboard');
       setRegistrationBanner(
-        `✅ 「${u?.nickname || matchedPii.fullName}」としてログインしました。`
+        `「${u?.nickname || matchedPii.fullName}」としてログインしました。`
       );
       return { success: true, message: 'ログインしました。' };
     }
@@ -1196,12 +1517,11 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     if (matchedUserByName) {
       startAsUserDemo(matchedUserByName.id, 'user-dashboard');
       setRegistrationBanner(
-        `✅ 「${matchedUserByName.nickname}」としてログインしました。`
+        `「${matchedUserByName.nickname}」としてログインしました。`
       );
       return { success: true, message: 'ログインしました。' };
     }
 
-    // 2. 事業所名またはIDから検索
     const matchedProv = providerProfiles.find(
       (p) =>
         p.name.toLowerCase().includes(trimmed) || p.id.toLowerCase() === trimmed
@@ -1209,7 +1529,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     if (matchedProv) {
       startAsProviderDemo(matchedProv.id, 'provider-dashboard');
       setRegistrationBanner(
-        `✅ 事業所「${matchedProv.name}」としてログインしました。`
+        `事業所「${matchedProv.name}」としてログインしました。`
       );
       return { success: true, message: 'ログインしました。' };
     }
@@ -1223,43 +1543,102 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const openProviderDetail = (providerId: string) => {
     setSelectedProviderIdForDetail(providerId);
-    addAuditLog('DATA_VIEW_MATCHING', `事業所詳細の閲覧 (${providerId})`, providerId);
+    addAuditLog('DATA_VIEW_MATCHING', `事業所詳細・受入条件カードの閲覧 (${providerId})`, providerId);
     navigateTo('user-provider-detail');
   };
 
   const openUserDetailForProvider = (userId: string) => {
     setSelectedUserIdForDetail(userId);
-    addAuditLog('DATA_VIEW_MATCHING', `事業所による匿名利用希望者詳細の閲覧 (${userId})`, userId);
+    addAuditLog('DATA_VIEW_MATCHING', `事業所による利用希望者情報の閲覧 (${userId})`, userId);
     navigateTo('provider-user-detail');
   };
 
+  const appendDisclosureHistory = (params: {
+    userId: string;
+    providerId: string;
+    stage: DisclosureStage;
+    action: 'granted' | 'revoked';
+    disclosedItems: string[];
+  }) => {
+    const prov = providerProfiles.find((p) => p.id === params.providerId);
+    const entry: DisclosureHistoryEntry = {
+      id: `dhist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      userId: params.userId,
+      providerId: params.providerId,
+      providerName: prov?.name || params.providerId,
+      stage: params.stage,
+      action: params.action,
+      disclosedItems: params.disclosedItems,
+      timestamp: getNowDateTime(),
+    };
+    setDisclosureHistory((prev) => [entry, ...prev]);
+  };
+
+  const ensureStage1ConsentRecord = (userId: string, providerId: string) => {
+    const existing = disclosures.find(
+      (d) => d.userId === userId && d.providerId === providerId
+    );
+    if (existing) return;
+
+    setDisclosures((prev) => [
+      ...prev,
+      {
+        userId,
+        providerId,
+        stage: 1,
+        disclosedFields: {
+          nicknameAndRole: true,
+          conditionProfile: false,
+          nearestStationArea: false,
+          preferredContactMethod: false,
+          consultationSupportOffice: false,
+          detailedScheduleNote: false,
+          piiContactAccess: false,
+        },
+      },
+    ]);
+    appendDisclosureHistory({
+      userId,
+      providerId,
+      stage: 1,
+      action: 'granted',
+      disclosedItems: ['ニックネーム', '希望条件の概要（匿名相談開始）'],
+    });
+  };
+
   const openChatWith = (partnerId: string) => {
-    if (role === 'provider' && !isCurrentProviderPaid) {
-      const existingReq = getChatRequestBetween(partnerId, activeProviderId);
-      const hasUserInquiry =
-        existingReq?.initiatedBy === 'user' ||
-        existingReq?.status === 'approved' ||
-        messages.some(
-          (m) =>
-            m.userId === partnerId &&
-            m.providerId === activeProviderId &&
-            m.senderType === 'user'
-        );
-      if (!hasUserInquiry) {
+    if (role === 'provider') {
+      const sub = getProviderSubscription(activeProviderId);
+      const req = getChatRequestBetween(partnerId, activeProviderId);
+      const check = verifyProviderChatAccess({
+        subscription: sub,
+        plans: subscriptionPlans,
+        chatRequest: req,
+        allProviderChatRequests: chatRequests,
+        currentYearMonth: getCurrentYearMonth(),
+      });
+      if (!check.canSendMessage && !check.canRequestChat) {
         setShowChatUpgradeModal(true);
         addAuditLog(
           'DATA_VIEW_MATCHING',
-          `無料プラン事業所による新規アプローチ制限表示 (${activeProviderId})`,
+          `無料プランの月間新規申請上限到達 (${activeProviderId})`,
           partnerId
         );
+        return;
+      }
+      if (!check.canSendMessage && check.canRequestChat) {
+        setSelectedUserIdForDetail(partnerId);
+        navigateTo('provider-user-detail');
         return;
       }
     }
 
     setActiveChatPartnerId(partnerId);
     if (role === 'user') {
+      ensureStage1ConsentRecord(activeUserId, partnerId);
       markMessagesRead(activeUserId, partnerId, 'user');
     } else if (role === 'provider') {
+      ensureStage1ConsentRecord(partnerId, activeProviderId);
       markMessagesRead(partnerId, activeProviderId, 'provider');
     }
     navigateTo('chat');
@@ -1268,16 +1647,25 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   const subscribeProviderToPlan = (
     providerId: string,
     planId: SubscriptionPlanId,
-    paymentSummary?: ProviderPaymentSummary
+    paymentSummary?: ProviderPaymentSummary,
+    billingCycle?: BillingCycle
   ) => {
+    const today = getTodayIso();
     setProviderSubscriptions((prev) => {
       const existing = prev.find((s) => s.providerId === providerId);
+      const cycle: BillingCycle =
+        billingCycle || existing?.billingCycle || 'monthly';
+      const nextDate =
+        planId === 'free'
+          ? '-'
+          : addMonthsToIso(today, cycle === 'annual' ? 12 : 1);
       const updated: ProviderSubscription = {
         providerId,
         planId,
+        billingCycle: cycle,
         status: 'active',
-        startedAt: '2026-11-14',
-        nextRenewalDate: planId === 'free' ? '-' : '2026-12-14',
+        startedAt: today,
+        nextRenewalDate: nextDate,
         accountApprovalStatus: 'approved',
         paymentSummary:
           planId === 'free'
@@ -1291,7 +1679,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     });
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `事業所プラン変更（デモ契約）: ${planId} (${providerId})`,
+      `事業所プラン変更: ${planId} (${billingCycle || 'monthly'}) (${providerId})`,
       providerId
     );
   };
@@ -1313,6 +1701,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const cancelProviderSubscription = (providerId: string) => {
+    const today = getTodayIso();
     setProviderSubscriptions((prev) =>
       prev.map((s) =>
         s.providerId === providerId
@@ -1321,14 +1710,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
               planId: 'free',
               status: 'active',
               nextRenewalDate: '-',
-              canceledAt: '2026-11-09',
+              canceledAt: today,
             }
           : s
       )
     );
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `事業所による有料プラン解約手続き完了 -> 無料プランへ移行 (${providerId})`,
+      `事業所による有料プラン解約 -> 無料プランへ移行 (${providerId})`,
       providerId
     );
   };
@@ -1367,27 +1756,123 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     );
   };
 
+  const markProviderUpdatedToday = (providerId: string) => {
+    const today = getTodayIso();
+    setProviderProfiles((prev) =>
+      prev.map((p) =>
+        p.id === providerId ? { ...p, updatedAt: today } : p
+      )
+    );
+    setProviderAvailabilities((prev) =>
+      prev.map((a) =>
+        a.providerId === providerId ? { ...a, updatedAt: today } : a
+      )
+    );
+    addAuditLog(
+      'DATA_UPDATE_PROFILE',
+      `事業所情報・受入条件カードの最終更新日を本日（${today}）に更新`,
+      providerId
+    );
+  };
+
+  const toggleProviderMatchFilter = (providerId: string) => {
+    setProviderProfiles((prev) =>
+      prev.map((p) =>
+        p.id === providerId
+          ? { ...p, filterOnlyMatchingRequests: !p.filterOnlyMatchingRequests }
+          : p
+      )
+    );
+  };
+
+  const addProviderStaffMember = (
+    providerId: string,
+    staff: Omit<ProviderStaffMember, 'id'>
+  ) => {
+    const newStaff: ProviderStaffMember = {
+      ...staff,
+      id: `st-${Date.now()}`,
+    };
+    setProviderProfiles((prev) =>
+      prev.map((p) =>
+        p.id === providerId
+          ? { ...p, staffMembers: [...(p.staffMembers || []), newStaff] }
+          : p
+      )
+    );
+  };
+
+  const removeProviderStaffMember = (providerId: string, staffId: string) => {
+    setProviderProfiles((prev) =>
+      prev.map((p) =>
+        p.id === providerId
+          ? {
+              ...p,
+              staffMembers: (p.staffMembers || []).filter(
+                (s) => s.id !== staffId
+              ),
+            }
+          : p
+      )
+    );
+  };
+
+  const addProviderBranch = (
+    providerId: string,
+    branch: Omit<ProviderBranch, 'id'>
+  ) => {
+    const newBranch: ProviderBranch = {
+      ...branch,
+      id: `br-${Date.now()}`,
+    };
+    setProviderProfiles((prev) =>
+      prev.map((p) =>
+        p.id === providerId
+          ? { ...p, branches: [...(p.branches || []), newBranch] }
+          : p
+      )
+    );
+  };
+
+  const removeProviderBranch = (providerId: string, branchId: string) => {
+    setProviderProfiles((prev) =>
+      prev.map((p) =>
+        p.id === providerId
+          ? {
+              ...p,
+              branches: (p.branches || []).filter((b) => b.id !== branchId),
+            }
+          : p
+      )
+    );
+  };
+
   const sendChatRequest = (
     userId: string,
     providerId: string,
     initiatedBy: 'provider' | 'user',
     initialMessage: string
-  ) => {
+  ): { ok: boolean; message?: string } => {
     const providerSub = getProviderSubscription(providerId);
-    if (
-      initiatedBy === 'provider' &&
-      !isPaidPlanActive(providerSub, subscriptionPlans)
-    ) {
-      setShowChatUpgradeModal(true);
-      return;
-    }
-
-    const nowStr = '2026-11-09 10:30';
     const existing = chatRequests.find(
       (r) => r.userId === userId && r.providerId === providerId
     );
 
-    // 利用者側から開始する場合は即approvedにしてチャット開始可能にする
+    if (initiatedBy === 'provider') {
+      const check = verifyProviderChatAccess({
+        subscription: providerSub,
+        plans: subscriptionPlans,
+        chatRequest: existing,
+        allProviderChatRequests: chatRequests,
+        currentYearMonth: getCurrentYearMonth(),
+      });
+      if (!check.canRequestChat && !check.canSendMessage) {
+        setShowChatUpgradeModal(true);
+        return { ok: false, message: check.reason };
+      }
+    }
+
+    const nowStr = getNowDateTime();
     const nextStatus = initiatedBy === 'user' ? 'approved' : 'pending';
 
     if (existing) {
@@ -1413,12 +1898,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         status: nextStatus,
         initialMessage:
           initialMessage.trim() ||
-          'ご登録の希望条件を拝見しました。一度詳しくお話を伺いたいです。',
+          'ご登録の希望条件と受入条件カードの内容が近いため、ご相談したくご連絡いたしました。',
         requestedAt: nowStr,
         respondedAt: initiatedBy === 'user' ? nowStr : undefined,
       };
       setChatRequests((prev) => [newReq, ...prev]);
     }
+
+    ensureStage1ConsentRecord(userId, providerId);
 
     if (initiatedBy === 'user' && initialMessage.trim()) {
       sendMessage(userId, providerId, 'user', initialMessage.trim());
@@ -1429,6 +1916,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       `チャット開始申請の送信 (送信元: ${initiatedBy}, 状態: ${nextStatus})`,
       initiatedBy === 'provider' ? userId : providerId
     );
+    return { ok: true };
   };
 
   const respondToChatRequest = (
@@ -1438,7 +1926,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     const targetReq = chatRequests.find((r) => r.id === requestId);
     if (!targetReq) return;
 
-    const nowStr = '2026-11-09 10:35';
+    const nowStr = getNowDateTime();
     setChatRequests((prev) =>
       prev.map((r) =>
         r.id === requestId
@@ -1448,7 +1936,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     );
 
     if (decision === 'approved') {
-      // 申請時の初回メッセージをチャットスレッドに追加（未追加の場合）
+      ensureStage1ConsentRecord(targetReq.userId, targetReq.providerId);
       const alreadyExists = messages.some(
         (m) =>
           m.userId === targetReq.userId &&
@@ -1464,6 +1952,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
           text: targetReq.initialMessage,
           createdAt: targetReq.requestedAt,
           readByRecipient: false,
+          messageKind: 'text',
         };
         setMessages((prev) => [...prev, msg]);
       }
@@ -1478,7 +1967,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     addAuditLog(
       decision === 'approved' ? 'CONSENT_GRANTED' : 'CONSENT_REVOKED',
       `利用者が事業所（${targetReq.providerId}）からのチャット開始申請を「${
-        decision === 'approved' ? '承認' : '辞退'
+        decision === 'approved' ? '承認（第1段階：匿名相談開始）' : '見送り'
       }」しました`,
       targetReq.providerId
     );
@@ -1489,6 +1978,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     providerId: string,
     caseStatus: CaseManagementStatus
   ) => {
+    const nowStr = getNowDateTime();
     setInteractions((prev) => {
       const existing = prev.find(
         (i) => i.userId === userId && i.providerId === providerId
@@ -1496,7 +1986,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       if (existing) {
         return prev.map((i) =>
           i.userId === userId && i.providerId === providerId
-            ? { ...i, caseStatus, updatedAt: '2026-11-09 10:30' }
+            ? { ...i, caseStatus, updatedAt: nowStr }
             : i
         );
       }
@@ -1513,7 +2003,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
               ? '今回は対応が難しい'
               : '詳しい条件を確認したい',
           caseStatus,
-          updatedAt: '2026-11-09 10:30',
+          updatedAt: nowStr,
         },
       ];
     });
@@ -1525,6 +2015,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const saveUserBundle = (bundle: FullUserBundle, pii?: Partial<UserPII>) => {
+    const nowStr = getNowDateTime();
     setUserProfiles((prev) =>
       prev.map((u) => (u.id === bundle.profile.id ? bundle.profile : u))
     );
@@ -1539,19 +2030,30 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     if (pii) {
       setUserPIIList((prev) =>
         prev.map((item) =>
-          item.userId === bundle.profile.id ? { ...item, ...pii, updatedAt: '2026-11-09 09:20' } : item
+          item.userId === bundle.profile.id
+            ? { ...item, ...pii, updatedAt: nowStr }
+            : item
         )
       );
     }
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `利用者プロファイル・支援ニーズ情報の自己保存 (${bundle.profile.id})`
+      `利用者プロファイル・特性プロフィール・希望条件を保存 (${bundle.profile.id})`
     );
   };
 
   const saveProviderBundle = (bundle: FullProviderBundle) => {
+    const today = getTodayIso();
+    const updatedProfile: ProviderProfile = {
+      ...bundle.profile,
+      updatedAt: today,
+    };
+    const updatedAvailability: ProviderAvailability = {
+      ...bundle.availability,
+      updatedAt: today,
+    };
     setProviderProfiles((prev) =>
-      prev.map((p) => (p.id === bundle.profile.id ? bundle.profile : p))
+      prev.map((p) => (p.id === bundle.profile.id ? updatedProfile : p))
     );
     setProviderCapabilities((prev) =>
       prev.map((c) =>
@@ -1562,14 +2064,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     setProviderAvailabilities((prev) =>
       prev.map((a) =>
-        a.providerId === bundle.availability.providerId
-          ? bundle.availability
-          : a
+        a.providerId === bundle.availability.providerId ? updatedAvailability : a
       )
     );
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `事業所プロファイル・対応能力の自己更新 (${bundle.profile.id})`
+      `事業所情報・受入条件カードを更新（最終更新日: ${today} / ${bundle.profile.id}）`
     );
   };
 
@@ -1578,6 +2078,10 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     status: ProviderAcceptanceStatus,
     note?: string
   ) => {
+    const today = getTodayIso();
+    setProviderProfiles((prev) =>
+      prev.map((p) => (p.id === providerId ? { ...p, updatedAt: today } : p))
+    );
     setProviderAvailabilities((prev) =>
       prev.map((a) =>
         a.providerId === providerId
@@ -1586,21 +2090,21 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
               acceptanceStatus: status,
               acceptableConditionsNote:
                 note !== undefined ? note : a.acceptableConditionsNote,
-              updatedAt: '2026-11-09',
+              updatedAt: today,
             }
           : a
       )
     );
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `事業所受け入れ状況の変更: ${status} (${providerId})`
+      `事業所受け入れ状況の更新: ${status} (${providerId})`
     );
   };
 
   const toggleUserFavoriteProvider = (userId: string, providerId: string) => {
-    const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const nowStr = getNowDateTime();
     setInteractions((prev) =>
-      applyToggleFavoriteInteraction(prev, userId, providerId, now)
+      applyToggleFavoriteInteraction(prev, userId, providerId, nowStr)
     );
   };
 
@@ -1609,9 +2113,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     providerId: string,
     note: string
   ) => {
-    const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const nowStr = getNowDateTime();
     setInteractions((prev) =>
-      applyUpdateFavoriteNoteInteraction(prev, userId, providerId, note, now)
+      applyUpdateFavoriteNoteInteraction(prev, userId, providerId, note, nowStr)
     );
   };
 
@@ -1620,6 +2124,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     providerId: string,
     reaction: ProviderReactionStatus
   ) => {
+    const nowStr = getNowDateTime();
     const mappedCase: CaseManagementStatus =
       reaction === '対応を検討したい'
         ? '対応中'
@@ -1640,7 +2145,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
                 ...i,
                 providerReaction: reaction,
                 caseStatus: mappedCase,
-                updatedAt: '2026-11-09 09:20',
+                updatedAt: nowStr,
               }
             : i
         );
@@ -1653,7 +2158,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
           isUserFavorite: false,
           providerReaction: reaction,
           caseStatus: mappedCase,
-          updatedAt: '2026-11-09 09:20',
+          updatedAt: nowStr,
         },
       ];
     });
@@ -1668,43 +2173,49 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     userId: string,
     providerId: string,
     senderType: 'user' | 'provider',
-    text: string
+    text: string,
+    options?: {
+      messageKind?: ChatMessageKind;
+      proposedSlots?: ScheduleCandidateSlot[];
+      confirmedSlot?: ScheduleCandidateSlot;
+      confirmedKind?: 'interview' | 'visit';
+    }
   ) => {
     if (!text.trim()) return;
-    if (senderType === 'provider' && !isCurrentProviderPaid) {
+    if (senderType === 'provider') {
+      const providerSub = getProviderSubscription(providerId);
       const existingReq = chatRequests.find(
         (r) => r.userId === userId && r.providerId === providerId
       );
-      const hasUserInquiry =
-        existingReq?.initiatedBy === 'user' ||
-        existingReq?.status === 'approved' ||
-        messages.some(
-          (m) =>
-            m.userId === userId &&
-            m.providerId === providerId &&
-            m.senderType === 'user'
-        );
-      if (!hasUserInquiry) {
+      const check = verifyProviderChatAccess({
+        subscription: providerSub,
+        plans: subscriptionPlans,
+        chatRequest: existingReq,
+        allProviderChatRequests: chatRequests,
+        currentYearMonth: getCurrentYearMonth(),
+      });
+      if (!check.canSendMessage) {
         setShowChatUpgradeModal(true);
         return;
       }
     }
 
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
+    const nowStr = getNowDateTime();
     const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       userId,
       providerId,
       senderType,
       text: text.trim(),
-      createdAt: `2026-11-09 ${hh}:${mm}`,
+      createdAt: nowStr,
       readByRecipient: false,
+      messageKind: options?.messageKind || 'text',
+      proposedSlots: options?.proposedSlots,
+      confirmedSlot: options?.confirmedSlot,
+      confirmedKind: options?.confirmedKind,
     };
     setMessages((prev) => [...prev, newMsg]);
 
-    // Ensure chat request is approved if user initiates message
     if (senderType === 'user') {
       setChatRequests((prev) => {
         const ex = prev.find(
@@ -1713,7 +2224,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         if (ex) {
           return prev.map((r) =>
             r.id === ex.id
-              ? { ...r, status: 'approved', respondedAt: `2026-11-09 ${hh}:${mm}` }
+              ? { ...r, status: 'approved', respondedAt: nowStr }
               : r
           );
         }
@@ -1726,42 +2237,80 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
             initiatedBy: 'user',
             status: 'approved',
             initialMessage: text.trim(),
-            requestedAt: `2026-11-09 ${hh}:${mm}`,
-            respondedAt: `2026-11-09 ${hh}:${mm}`,
+            requestedAt: nowStr,
+            respondedAt: nowStr,
           },
         ];
       });
     }
 
-    // Ensure Stage 2 record
+    ensureStage1ConsentRecord(userId, providerId);
+
+    addAuditLog(
+      'CHAT_MESSAGE_SENT',
+      `チャットメッセージ送受信 (${options?.messageKind || 'text'} / 送信元: ${senderType})`,
+      senderType === 'user' ? providerId : userId
+    );
+  };
+
+  const confirmInterviewOrVisitSchedule = (params: {
+    userId: string;
+    providerId: string;
+    confirmedBy: 'user' | 'provider';
+    kind: 'interview' | 'visit';
+    slot: ScheduleCandidateSlot;
+  }) => {
+    const nowStr = getNowDateTime();
+    const kindLabel = params.kind === 'visit' ? '見学' : '面談';
+    const summary = `${kindLabel}：${params.slot.day}曜 ${params.slot.timeSlot}`;
+
+    sendMessage(
+      params.userId,
+      params.providerId,
+      params.confirmedBy,
+      `【${kindLabel}日程の決定】${summary} で日程が確定しました。必要に応じ「第3段階：連絡先の開示」をご確認いただけます。`,
+      {
+        messageKind: 'schedule_confirmed',
+        confirmedKind: params.kind,
+        confirmedSlot: params.slot,
+      }
+    );
+
     setDisclosures((prev) => {
       const existing = prev.find(
-        (d) => d.userId === userId && d.providerId === providerId
+        (d) => d.userId === params.userId && d.providerId === params.providerId
       );
-      if (existing) return prev;
+      if (existing) {
+        return prev.map((d) =>
+          d.userId === params.userId && d.providerId === params.providerId
+            ? {
+                ...d,
+                scheduleDecidedAt: nowStr,
+                scheduleSummary: summary,
+              }
+            : d
+        );
+      }
       return [
         ...prev,
         {
-          userId,
-          providerId,
-          stage: 2,
+          userId: params.userId,
+          providerId: params.providerId,
+          stage: 1,
+          scheduleDecidedAt: nowStr,
+          scheduleSummary: summary,
           disclosedFields: {
             nicknameAndRole: true,
-            nearestStationArea: true,
-            preferredContactMethod: true,
-            consultationSupportOffice: true,
-            detailedScheduleNote: true,
+            conditionProfile: false,
+            nearestStationArea: false,
+            preferredContactMethod: false,
+            consultationSupportOffice: false,
+            detailedScheduleNote: false,
             piiContactAccess: false,
           },
         },
       ];
     });
-
-    addAuditLog(
-      'CHAT_MESSAGE_SENT',
-      `チャットメッセージ送受信 (送信元: ${senderType}, 文字数: ${text.length})`,
-      senderType === 'user' ? providerId : userId
-    );
   };
 
   const markMessagesRead = (
@@ -1792,31 +2341,96 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       (d) => d.userId === userId && d.providerId === providerId
     );
     if (existing) return existing;
-    const hasMessages = messages.some(
-      (m) => m.userId === userId && m.providerId === providerId
-    );
     return {
       userId,
       providerId,
-      stage: hasMessages ? 2 : 1,
+      stage: 1,
       disclosedFields: {
         nicknameAndRole: true,
+        conditionProfile: false,
+        nearestStationArea: false,
+        preferredContactMethod: false,
+        consultationSupportOffice: false,
+        detailedScheduleNote: false,
+        piiContactAccess: false,
+      },
+    };
+  };
+
+  const grantStage2Disclosure = (userId: string, providerId: string) => {
+    const nowStr = getNowDateTime();
+    setDisclosures((prev) => {
+      const existing = prev.find(
+        (d) => d.userId === userId && d.providerId === providerId
+      );
+      const nextFields = {
+        nicknameAndRole: true,
+        conditionProfile: true,
         nearestStationArea: true,
         preferredContactMethod: true,
         consultationSupportOffice: true,
         detailedScheduleNote: true,
-        piiContactAccess: false,
-      },
-    };
+        piiContactAccess:
+          existing?.stage === 3 ? Boolean(existing.disclosedFields.piiContactAccess) : false,
+      };
+      if (existing) {
+        return prev.map((d) =>
+          d.userId === userId && d.providerId === providerId
+            ? {
+                ...d,
+                stage: d.stage === 3 ? 3 : 2,
+                consentedAt: nowStr,
+                revokedAt: undefined,
+                disclosedFields: nextFields,
+              }
+            : d
+        );
+      }
+      return [
+        ...prev,
+        {
+          userId,
+          providerId,
+          stage: 2,
+          consentedAt: nowStr,
+          disclosedFields: nextFields,
+        },
+      ];
+    });
+
+    appendDisclosureHistory({
+      userId,
+      providerId,
+      stage: 2,
+      action: 'granted',
+      disclosedItems: ['障害種別', '介助内容', '希望曜日・時間帯', '特性プロフィール・配慮事項'],
+    });
+
+    addAuditLog(
+      'CONSENT_GRANTED',
+      `第2段階「条件の開示」に利用者が同意 (Provider: ${providerId})`,
+      providerId
+    );
   };
 
   const grantStage3Disclosure = (
     userId: string,
     providerId: string,
     allowPiiContactAccess: boolean = true
-  ) => {
+  ): { ok: boolean; message?: string } => {
+    const current = getDisclosureStage(userId, providerId);
+    if (!current.scheduleDecidedAt) {
+      return {
+        ok: false,
+        message:
+          '氏名・電話番号・メールアドレスは、チャットで「面談」または「見学」の日程が決まった後に開示できます。',
+      };
+    }
+
+    const nowStr = getNowDateTime();
     const fields = {
       nicknameAndRole: true,
+      conditionProfile: true,
       nearestStationArea: true,
       preferredContactMethod: true,
       consultationSupportOffice: true,
@@ -1833,7 +2447,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
             ? {
                 ...d,
                 stage: 3,
-                consentedAt: '2026-11-09 10:40',
+                consentedAt: nowStr,
                 revokedAt: undefined,
                 disclosedFields: fields,
               }
@@ -1846,37 +2460,77 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
           userId,
           providerId,
           stage: 3,
-          consentedAt: '2026-11-09 10:40',
+          consentedAt: nowStr,
+          scheduleDecidedAt: current.scheduleDecidedAt,
+          scheduleSummary: current.scheduleSummary,
           disclosedFields: fields,
         },
       ];
     });
 
+    appendDisclosureHistory({
+      userId,
+      providerId,
+      stage: 3,
+      action: 'granted',
+      disclosedItems: ['氏名', '電話番号', 'メールアドレス（面談/見学日程決定後の連絡先開示）'],
+    });
+
     addAuditLog(
       'CONSENT_GRANTED',
-      `利用者による特定事業所への第3段階情報開示同意 (Provider: ${providerId}, PII連絡先許可: ${allowPiiContactAccess})`,
+      `第3段階「連絡先の開示」に利用者が同意 (Provider: ${providerId}, PII連絡先許可: ${allowPiiContactAccess})`,
       providerId
     );
+    return { ok: true };
   };
 
-  const revokeStage3Disclosure = (userId: string, providerId: string) => {
+  const revokeDisclosureToStage = (
+    userId: string,
+    providerId: string,
+    targetStage: 1 | 2 = 1
+  ) => {
+    const nowStr = getNowDateTime();
     setDisclosures((prev) =>
       prev.map((d) =>
         d.userId === userId && d.providerId === providerId
           ? {
               ...d,
-              stage: 2,
-              revokedAt: '2026-11-09 10:45',
-              disclosedFields: { ...d.disclosedFields, piiContactAccess: false },
+              stage: targetStage,
+              revokedAt: nowStr,
+              disclosedFields: {
+                nicknameAndRole: true,
+                conditionProfile: targetStage >= 2,
+                nearestStationArea: targetStage >= 2,
+                preferredContactMethod: targetStage >= 2,
+                consultationSupportOffice: targetStage >= 2,
+                detailedScheduleNote: targetStage >= 2,
+                piiContactAccess: false,
+              },
             }
           : d
       )
     );
+
+    appendDisclosureHistory({
+      userId,
+      providerId,
+      stage: targetStage,
+      action: 'revoked',
+      disclosedItems:
+        targetStage === 1
+          ? ['条件詳細・連絡先の開示を取り消し（第1段階「匿名相談」へ戻しました）']
+          : ['連絡先（氏名・電話番号・メール）の開示を取り消し（第2段階へ戻しました）'],
+    });
+
     addAuditLog(
       'CONSENT_REVOKED',
-      `利用者による第3段階詳細情報の開示取り消し (Provider: ${providerId})`,
+      `利用者による開示取り消し -> 第${targetStage}段階へ変更 (Provider: ${providerId})`,
       providerId
     );
+  };
+
+  const revokeStage3Disclosure = (userId: string, providerId: string) => {
+    revokeDisclosureToStage(userId, providerId, 2);
   };
 
   const toggleMfaSetting = () => {
@@ -1910,7 +2564,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const resetDemoData = () => {
+    localStorage.setItem(RESET_FLAG_KEY, '1');
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     setUserPIIList([]);
     setUserProfiles([]);
     setUserNeeds([]);
@@ -1921,6 +2577,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     setInteractions([]);
     setMessages([]);
     setDisclosures([]);
+    setDisclosureHistory([]);
+    setCoordinators([]);
+    setSharedCases([]);
     setAuditLogs([]);
     setSubscriptionPlans(DEFAULT_SUBSCRIPTION_PLANS);
     setProviderSubscriptions([]);
@@ -1929,10 +2588,44 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     setPendingMfaChallenge(null);
     setActiveUserId('');
     setActiveProviderId('');
+    setActiveCoordinatorId('');
     setRole('guest');
     setLastRegisteredRole(null);
-    setRegistrationBanner(null);
+    setRegistrationBanner('登録データをすべて消去して0件にリセットしました。新規登録から試せます。');
     setRateLimitMap({});
+    navigateTo('top');
+  };
+
+  const loadDemoData = () => {
+    localStorage.removeItem(RESET_FLAG_KEY);
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    setUserPIIList(INITIAL_USER_PII);
+    setUserProfiles(INITIAL_USER_PROFILES);
+    setUserNeeds(INITIAL_USER_NEEDS);
+    setUserPreferences(INITIAL_USER_PREFERENCES);
+    setProviderProfiles(INITIAL_PROVIDER_PROFILES);
+    setProviderCapabilities(INITIAL_PROVIDER_CAPABILITIES);
+    setProviderAvailabilities(INITIAL_PROVIDER_AVAILABILITY);
+    setInteractions(INITIAL_INTERACTIONS);
+    setMessages(INITIAL_MESSAGES);
+    setDisclosures(INITIAL_DISCLOSURES);
+    setDisclosureHistory(INITIAL_DISCLOSURE_HISTORY);
+    setCoordinators(INITIAL_COORDINATORS);
+    setSharedCases(INITIAL_SHARED_CASES);
+    setAuditLogs(INITIAL_AUDIT_LOGS);
+    setSubscriptionPlans(DEFAULT_SUBSCRIPTION_PLANS);
+    setProviderSubscriptions(INITIAL_PROVIDER_SUBSCRIPTIONS);
+    setChatRequests(INITIAL_CHAT_REQUESTS);
+    setAccountCredentials(INITIAL_CREDENTIALS);
+    setActiveUserId(INITIAL_USER_PROFILES[0].id);
+    setActiveProviderId(INITIAL_PROVIDER_PROFILES[0].id);
+    setActiveCoordinatorId(INITIAL_COORDINATORS[0].id);
+    setPendingMfaChallenge(null);
+    setRole('guest');
+    setRegistrationBanner(
+      '初期の動作確認用サンプルデータ（利用者5名・事業所5社・相談支援専門員1名）を読み込みました。'
+    );
     navigateTo('top');
   };
 
@@ -1943,6 +2636,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         currentView,
         activeUserId,
         activeProviderId,
+        activeCoordinatorId,
         selectedProviderIdForDetail,
         selectedUserIdForDetail,
         activeChatPartnerId,
@@ -1958,6 +2652,10 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         interactions,
         messages,
         disclosures,
+        disclosureHistory,
+        coordinators,
+        sharedCases,
+        currentCoordinator,
         subscriptionPlans,
         providerSubscriptions,
         chatRequests,
@@ -1996,6 +2694,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         openRegistrationScreen,
         completeUserRegistration,
         completeProviderRegistration,
+        registerCoordinator,
+        startAsCoordinatorDemo,
+        shareUserWithCoordinator,
         loginByEmail,
         navigateTo,
         startAsUserDemo,
@@ -2015,6 +2716,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         cancelProviderSubscription,
         updatePlanMonthlyPrice,
         updateProviderApprovalStatus,
+        markProviderUpdatedToday,
+        toggleProviderMatchFilter,
+        addProviderStaffMember,
+        removeProviderStaffMember,
+        addProviderBranch,
+        removeProviderBranch,
         sendChatRequest,
         respondToChatRequest,
         updateCaseManagementStatus,
@@ -2025,11 +2732,15 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         updateUserFavoriteNote,
         setProviderReactionToUser,
         sendMessage,
+        confirmInterviewOrVisitSchedule,
         markMessagesRead,
+        grantStage2Disclosure,
         grantStage3Disclosure,
+        revokeDisclosureToStage,
         revokeStage3Disclosure,
         getDisclosureStage,
         resetDemoData,
+        loadDemoData,
         toggleMfaSetting,
         simulateRateLimitTrigger,
       }}

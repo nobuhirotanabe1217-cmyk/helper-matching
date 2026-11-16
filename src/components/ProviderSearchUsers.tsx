@@ -12,6 +12,7 @@ import {
   Check,
   Sparkles,
   Clock,
+  Filter,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -23,7 +24,12 @@ import {
   SERVICE_TYPES,
   ServiceType,
 } from '../types/domain';
+import { getCurrentYearMonth } from '../utils/date';
 import { calculateMatchResult } from '../utils/matching';
+import {
+  doesUserMatchProviderAcceptanceFilter,
+  verifyProviderChatAccess,
+} from '../utils/subscription';
 import {
   CareNeedsIconGrid,
   MatchScoreRing,
@@ -49,14 +55,18 @@ export const ProviderSearchUsers: React.FC = () => {
     activeProviderId,
     currentProviderBundle,
     currentProviderPlanDef,
+    currentProviderSubscription,
+    subscriptionPlans,
     isCurrentProviderPaid,
     userProfiles,
     getUserBundleById,
     interactions,
+    chatRequests,
     getDisclosureStage,
     getChatRequestBetween,
     sendChatRequest,
     updateCaseManagementStatus,
+    toggleProviderMatchFilter,
     openUserDetailForProvider,
     openChatWith,
     setShowChatUpgradeModal,
@@ -69,7 +79,6 @@ export const ProviderSearchUsers: React.FC = () => {
   const [filterDay, setFilterDay] = useState<DayOfWeek | 'all'>('all');
   const [showFilters, setShowFilters] = useState<boolean>(false);
 
-  // チャット開始申請フォーム用ステート（有料プラン事業所向け）
   const [requestingUserId, setRequestingUserId] = useState<string | null>(null);
   const [requestMessageText, setRequestMessageText] = useState<string>(
     CHAT_TEMPLATES_PROVIDER[0]
@@ -82,6 +91,13 @@ export const ProviderSearchUsers: React.FC = () => {
     setFilterDay('all');
   };
 
+  const overallAccess = verifyProviderChatAccess({
+    subscription: currentProviderSubscription,
+    plans: subscriptionPlans,
+    allProviderChatRequests: chatRequests,
+    currentYearMonth: getCurrentYearMonth(),
+  });
+
   const evaluatedUsers = userProfiles
     .map((u) => {
       const bundle = getUserBundleById(u.id);
@@ -92,6 +108,14 @@ export const ProviderSearchUsers: React.FC = () => {
       );
       const disclosure = getDisclosureStage(u.id, activeProviderId);
       const chatReq = getChatRequestBetween(u.id, activeProviderId);
+      const matchesAcceptance = doesUserMatchProviderAcceptanceFilter({
+        providerProfile: currentProviderBundle.profile,
+        providerCapabilities: currentProviderBundle.capabilities,
+        providerAvailability: currentProviderBundle.availability,
+        userNeeds: bundle.needs,
+        userPreferences: bundle.preferences,
+        userProfile: bundle.profile,
+      });
       return {
         bundle,
         match,
@@ -99,10 +123,18 @@ export const ProviderSearchUsers: React.FC = () => {
         isUserFavoritedUs: Boolean(interaction?.isUserFavorite),
         disclosure,
         chatReq,
+        matchesAcceptance,
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
     .filter((item) => {
+      if (
+        isCurrentProviderPaid &&
+        currentProviderBundle.profile.filterOnlyMatchingRequests &&
+        !item.matchesAcceptance
+      ) {
+        return false;
+      }
       if (filterService !== 'all') {
         if (!item.bundle.needs.desiredServices.includes(filterService)) {
           return false;
@@ -140,13 +172,20 @@ export const ProviderSearchUsers: React.FC = () => {
     });
 
   const handleOpenChatOrRequest = (userId: string) => {
-    if (!isCurrentProviderPaid) {
-      setShowChatUpgradeModal(true);
-      return;
-    }
     const existingReq = getChatRequestBetween(userId, activeProviderId);
     if (existingReq?.status === 'approved') {
       openChatWith(userId);
+      return;
+    }
+    const access = verifyProviderChatAccess({
+      subscription: currentProviderSubscription,
+      plans: subscriptionPlans,
+      chatRequest: existingReq,
+      allProviderChatRequests: chatRequests,
+      currentYearMonth: getCurrentYearMonth(),
+    });
+    if (!access.canRequestChat && !access.canSendMessage) {
+      setShowChatUpgradeModal(true);
       return;
     }
     setRequestingUserId(userId);
@@ -154,17 +193,26 @@ export const ProviderSearchUsers: React.FC = () => {
   };
 
   const handleSubmitChatRequest = (userId: string, anonymousCode: string) => {
-    sendChatRequest(userId, activeProviderId, 'provider', requestMessageText);
+    const res = sendChatRequest(
+      userId,
+      activeProviderId,
+      'provider',
+      requestMessageText
+    );
+    if (!res.ok) {
+      setShowChatUpgradeModal(true);
+      return;
+    }
     setRequestingUserId(null);
     setRequestSentBanner(
-      `「${anonymousCode}」へチャット開始申請を送信しました。ご本人・ご家族が承認するとチャットが開始できます。`
+      `「${anonymousCode}」へチャット開始申請を送信しました。ご本人・ご家族が承認すると匿名相談からチャットが始まります。`
     );
     setTimeout(() => setRequestSentBanner(''), 5000);
   };
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
-      {/* ヘッダー＆現在のプラン案内 */}
+      {/* ヘッダー＆プラン案内 */}
       <section className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="space-y-1">
@@ -181,23 +229,46 @@ export const ProviderSearchUsers: React.FC = () => {
               >
                 {currentProviderPlanDef.name}
               </span>
+              {!isCurrentProviderPaid && (
+                <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-950 tabular-nums">
+                  今月の新規申請 残り {overallAccess.remainingFreeRequests ?? 0} / 1件
+                </span>
+              )}
             </div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-              匿名化された利用希望者情報の閲覧
+              利用希望者との条件マッチング一覧（段階的情報開示）
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-              無料登録の事業所様も、地域の支援ニーズと適合度（％）をご確認いただけます。個人特定の防止のため、氏名・詳細住所・連絡先・自由記述の詳細は非公開です。
+              第1段階（匿名相談）では障害詳細や連絡先は非表示です。利用者が第2段階「条件の開示」・第3段階「連絡先の開示」に同意すると段階的に情報が開示されます。
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {isCurrentProviderPaid && (
+              <button
+                type="button"
+                onClick={() => toggleProviderMatchFilter(activeProviderId)}
+                className={`min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer ${
+                  currentProviderBundle.profile.filterOnlyMatchingRequests
+                    ? 'bg-indigo-800 border-indigo-800 text-white'
+                    : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+                }`}
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>
+                  {currentProviderBundle.profile.filterOnlyMatchingRequests
+                    ? '受入条件に一致のみ表示中'
+                    : '受入条件一致のみ表示'}
+                </span>
+              </button>
+            )}
             {!isCurrentProviderPaid && (
               <button
                 type="button"
                 onClick={() => navigateTo('provider-billing')}
                 className="min-h-[40px] px-3.5 py-2 rounded-xl border border-teal-700 bg-teal-50/70 hover:bg-teal-100 text-teal-950 text-xs font-bold shrink-0 cursor-pointer"
               >
-                有料プランの詳細を見る →
+                有料プランを見る →
               </button>
             )}
             <SpeechButton
@@ -288,7 +359,7 @@ export const ProviderSearchUsers: React.FC = () => {
                   htmlFor="prov-filter-area"
                   className="block text-xs font-bold text-slate-700"
                 >
-                  希望地域（杉並・中野・練馬など）
+                  希望地域
                 </label>
                 <select
                   id="prov-filter-area"
@@ -333,14 +404,10 @@ export const ProviderSearchUsers: React.FC = () => {
         </div>
       </section>
 
-      {/* 利用希望者カード一覧（指示書 第4章の表示項目に準拠） */}
       {userProfiles.length === 0 && (
         <div className="bg-white border-2 border-dashed border-teal-300 rounded-3xl p-8 text-center space-y-4">
           <p className="text-lg font-extrabold text-slate-900">
             まだ利用希望者が登録されていません（0名）
-          </p>
-          <p className="text-xs sm:text-sm text-slate-600">
-            マッチングやチャット申請をテストするには、続けてテスト用の「利用者」を新規登録してください。
           </p>
           <button
             type="button"
@@ -351,6 +418,7 @@ export const ProviderSearchUsers: React.FC = () => {
           </button>
         </div>
       )}
+
       <div className="space-y-4">
         {evaluatedUsers.map(
           ({
@@ -365,6 +433,7 @@ export const ProviderSearchUsers: React.FC = () => {
             const timeLabels = preferences.preferredTimeSlots
               .map((s) => s.split('（')[0])
               .join('・');
+            const stage2Unlocked = disclosure.stage >= 2;
 
             return (
               <article
@@ -383,31 +452,29 @@ export const ProviderSearchUsers: React.FC = () => {
                           希望サービス：{needs.desiredServices.join(' / ')}
                         </span>
                         <span aria-hidden="true">·</span>
-                        <span>
-                          登録時期：{profile.registeredAt || '2026年11月'}
-                        </span>
+                        <span>登録：{profile.registeredAt || '最新'}</span>
                         {profile.isNewArrival && (
                           <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[11px]">
                             <Sparkles className="w-3 h-3" />
                             新着
                           </span>
                         )}
+                        <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[11px]">
+                          第{disclosure.stage}段階
+                        </span>
                         {disclosure.stage === 3 && (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className="text-teal-900 font-bold inline-flex items-center gap-1">
-                              <ShieldCheck className="w-3.5 h-3.5" />
-                              本人同意で詳細開示中
-                            </span>
-                          </>
+                          <span className="text-teal-900 font-bold inline-flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            連絡先開示済
+                          </span>
                         )}
                       </div>
 
                       <h2 className="text-lg sm:text-xl font-bold text-slate-900">
                         {profile.anonymousCode}
-                        {isCurrentProviderPaid && (
+                        {stage2Unlocked && (
                           <span className="text-sm font-medium text-slate-600 ml-2">
-                            （{profile.ageGroup}・{profile.gender}・区分：
+                            （{profile.nickname} · {profile.ageGroup} · 区分：
                             {needs.supportCategory}）
                           </span>
                         )}
@@ -425,7 +492,7 @@ export const ProviderSearchUsers: React.FC = () => {
 
                       {isUserFavoritedUs && (
                         <p className="text-xs font-bold text-amber-800 pt-0.5">
-                          ★貴事業所を「気になる」に保存しています
+                          ★貴事業所をお気に入りに保存しています
                         </p>
                       )}
                     </div>
@@ -438,7 +505,7 @@ export const ProviderSearchUsers: React.FC = () => {
                   />
                 </div>
 
-                {/* 中段：主な支援ニーズ＆希望曜日ストリップ */}
+                {/* 主な支援ニーズ＆希望曜日ストリップ */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-50/70 rounded-2xl p-3.5 border border-slate-100">
                   <div className="md:col-span-7 space-y-1.5">
                     <span className="text-xs font-bold text-slate-500 block">
@@ -461,33 +528,49 @@ export const ProviderSearchUsers: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 対応に必要な経験・配慮事項の概要（個人特定を防ぐ要約） */}
+                {/* 段階的情報開示の要約表示 */}
                 <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs sm:text-sm text-slate-700 space-y-1">
                   <span className="font-bold text-slate-900 block">
-                    対応に必要な経験・配慮事項の概要：
+                    {stage2Unlocked
+                      ? '第2段階開示済み（障害特性・配慮事項）：'
+                      : '第1段階（匿名相談）での希望概要：'}
                   </span>
-                  <p>
-                    {profile.briefSummaryForFreePlan ||
-                      `${needs.physicalConditions.join('・')} ／ ${
-                        preferences.helperGenderPreference
-                      }`}
-                  </p>
-                  {!isCurrentProviderPaid && (
-                    <p className="text-[11px] text-slate-500 flex items-center gap-1 pt-1">
-                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                      個人の特定を防ぐため、無料プランでは年代・詳細な障害特性・自由記述の相談内容は非表示です。
-                    </p>
+                  {stage2Unlocked ? (
+                    <div className="space-y-1">
+                      <p>
+                        障害種別：{needs.disabilityTypes.join('・')} ／{' '}
+                        {needs.communicationConsiderations.join('・')}
+                      </p>
+                      {needs.dislikesAndAccommodations && (
+                        <p className="text-slate-800">
+                          苦手なこと・配慮してほしいこと：{needs.dislikesAndAccommodations}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <p>
+                        {profile.briefSummaryForFreePlan ||
+                          `${needs.physicalConditions.join('・')} ／ ${
+                            preferences.helperGenderPreference
+                          }`}
+                      </p>
+                      <p className="text-[11px] text-slate-500 flex items-center gap-1 pt-1">
+                        <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                        第1段階（匿名相談）のため、障害特性の詳細・連絡先は非表示です（利用者の第2・第3段階同意後に開示されます）。
+                      </p>
+                    </>
                   )}
                 </div>
 
-                {/* チャット開始申請インラインフォーム（有料プランでボタンを押した際） */}
-                {requestingUserId === profile.id && isCurrentProviderPaid && (
+                {/* チャット開始申請インラインフォーム */}
+                {requestingUserId === profile.id && (
                   <div className="p-4 rounded-2xl bg-teal-50/70 border-2 border-teal-700 space-y-3">
                     <p className="text-sm font-bold text-slate-900">
                       「{profile.anonymousCode}」へチャット開始申請を送る
                     </p>
                     <p className="text-xs text-slate-600">
-                      利用者・ご家族が申請を承認した場合にチャットが開始されます（承認されるまで個人情報は開示されません）。
+                      利用者が承認すると第1段階「匿名相談」からやり取りが始まります。
                     </p>
                     <textarea
                       rows={2}
@@ -521,11 +604,11 @@ export const ProviderSearchUsers: React.FC = () => {
                   </div>
                 )}
 
-                {/* 下段アクションボタン（案件ステータス管理 ＆ チャット開始申請） */}
+                {/* 下段アクションボタン */}
                 <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-xs font-bold text-slate-500 mr-1">
-                      案件状況：
+                      案件進捗：
                     </span>
                     {CASE_STATUSES.map((st) => {
                       const active = caseStatus === st;
@@ -584,8 +667,7 @@ export const ProviderSearchUsers: React.FC = () => {
                         <Check className="w-4 h-4" aria-hidden="true" />
                         承認済・チャットを開く
                       </button>
-                    ) : chatReq?.status === 'pending' &&
-                      isCurrentProviderPaid ? (
+                    ) : chatReq?.status === 'pending' ? (
                       <span className="min-h-[46px] px-4 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs font-bold flex items-center gap-1.5">
                         <Clock className="w-4 h-4 text-amber-800" aria-hidden="true" />
                         チャット申請済（承認待ち）

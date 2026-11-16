@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateMatchResult, FullProviderBundle, FullUserBundle } from './matching';
+import {
+  calculateMatchResult,
+  compareProvidersForUserSearch,
+  FullProviderBundle,
+  FullUserBundle,
+} from './matching';
 import {
   INITIAL_PROVIDER_AVAILABILITY,
   INITIAL_PROVIDER_CAPABILITIES,
@@ -30,7 +35,7 @@ function getProviderBundle(providerId: string): FullProviderBundle {
   };
 }
 
-test('User 001 (Suginami, Mobility + Home care, Wheelchair, Female helper) matches strongly with Provider 001', () => {
+test('Score breakdown totals 100 max with 25/25/20/15/10/5 weights and populates matchingPoints', () => {
   const user1 = getUserBundle('user-001');
   const prov1 = getProviderBundle('prov-001');
   const result = calculateMatchResult(user1, prov1);
@@ -38,25 +43,41 @@ test('User 001 (Suginami, Mobility + Home care, Wheelchair, Female helper) match
   assert.equal(result.judgment, 'マッチング候補');
   assert.equal(result.breakdown.serviceScore, 25);
   assert.equal(result.breakdown.careNeedsScore, 25);
+  assert.equal(result.breakdown.disabilityExpScore, 20);
+  assert.equal(result.breakdown.scheduleScore, 15);
   assert.equal(result.breakdown.areaScore, 10);
-  assert.equal(result.breakdown.genderScore, 10);
-  assert.ok(result.breakdown.totalScore >= 85);
+  assert.equal(result.breakdown.genderScore, 5);
+  assert.equal(result.breakdown.totalScore, 100);
+  assert.ok(result.matchingPoints.length >= 4);
+  assert.equal(result.isStaleProvider, false);
 });
 
-test('User 004 (Visual impairment, Accompanied support) is out of match for Provider 005 (Home care only)', () => {
+test('User 004 (Visual impairment, Accompanied support) matches 要確認 with Provider 005 (stale > 30 days)', () => {
   const user4 = getUserBundle('user-004');
   const prov5 = getProviderBundle('prov-005');
   const result = calculateMatchResult(user4, prov5);
 
-  // User 004 wants 同行援護 + 居宅介護; Provider 005 only offers 居宅介護 and lacks 通院時の付き添い
   assert.equal(result.judgment, '要確認');
   assert.ok(result.breakdown.serviceScore < 25);
   assert.ok(result.criticalWarnings.length > 0);
+  assert.equal(result.isStaleProvider, true);
+  assert.ok((result.daysSinceUpdate || 0) >= 30);
+});
+
+test('Stale providers (>=30 days) always sort lower than fresh providers regardless of score', () => {
+  const user1 = getUserBundle('user-001');
+  const prov1 = getProviderBundle('prov-001');
+  const prov5 = getProviderBundle('prov-005');
+  const m1 = calculateMatchResult(user1, prov1);
+  const m5 = calculateMatchResult(user1, prov5);
+
+  const sorted = compareProvidersForUserSearch({ match: m5 }, { match: m1 });
+  assert.ok(sorted > 0);
 });
 
 test('Out of area or unsupported service results in マッチング対象外', () => {
-  const user3 = getUserBundle('user-003'); // Wants 移動支援 in 世田谷区・杉並区
-  const prov5 = getProviderBundle('prov-005'); // Only offers 居宅介護
+  const user3 = getUserBundle('user-003');
+  const prov5 = getProviderBundle('prov-005');
   const result = calculateMatchResult(user3, prov5);
 
   assert.equal(result.judgment, 'マッチング対象外');
