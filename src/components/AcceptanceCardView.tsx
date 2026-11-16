@@ -19,7 +19,9 @@ import {
   PROVIDER_CARE_LABELS,
   SupportDetailPolicy,
 } from '../types/domain';
-import { daysSinceIsoDate, formatJapaneseDate, isProviderStale } from '../utils/date';
+import { formatJapaneseDate } from '../utils/date';
+import { getProviderFreshnessInfo } from '../utils/freshness';
+import { ProviderFreshnessBadge } from './FreshnessBadges';
 
 function policyStyle(policy: SupportDetailPolicy): {
   label: SupportDetailPolicy;
@@ -49,6 +51,7 @@ export interface AcceptanceCardViewProps {
   isPaidHighlighted?: boolean;
   compact?: boolean;
   hideHeaderMeta?: boolean;
+  referenceDate?: Date;
 }
 
 export const AcceptanceCardView: React.FC<AcceptanceCardViewProps> = ({
@@ -57,11 +60,11 @@ export const AcceptanceCardView: React.FC<AcceptanceCardViewProps> = ({
   isPaidHighlighted = false,
   compact = false,
   hideHeaderMeta = false,
+  referenceDate,
 }) => {
   const { profile, capabilities, availability } = bundle;
   const updatedAt = profile.updatedAt || availability.updatedAt;
-  const isStale = isProviderStale(updatedAt);
-  const daysElapsed = daysSinceIsoDate(updatedAt);
+  const freshness = getProviderFreshnessInfo(updatedAt, referenceDate);
   const hasDesignatedNumber = /^\d{10}$/.test(
     (profile.designatedNumber || '').replace(/[-\s]/g, '')
   );
@@ -108,16 +111,11 @@ export const AcceptanceCardView: React.FC<AcceptanceCardViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
+            <ProviderFreshnessBadge info={freshness} />
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-700 font-bold tabular-nums">
               <Clock className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
               <span>最終更新日：{formatJapaneseDate(updatedAt)}</span>
             </span>
-            {isStale && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-300 text-amber-950 font-bold tabular-nums">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
-                <span>情報が古い可能性があります（{daysElapsed}日経過）</span>
-              </span>
-            )}
           </div>
         </div>
       )}

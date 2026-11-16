@@ -10,15 +10,26 @@ import {
   BadgeCheck,
   Clock,
   Lock,
+  PauseCircle,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import { calculateMatchResult } from '../utils/matching';
 import { formatJapaneseDate } from '../utils/date';
+import {
+  getProviderDiscrepancySummary,
+  getProviderFreshnessInfo,
+  getProviderInterviewTrustBadge,
+} from '../utils/freshness';
 import { isPaidPlanActive } from '../utils/subscription';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
 import { buildProviderDetailSpeechText } from '../utils/speech';
 import { AcceptanceCardView } from './AcceptanceCardView';
+import {
+  ProviderFreshnessBadge,
+  ProviderInterviewTrustBadge,
+  ProviderReportWarningBadge,
+} from './FreshnessBadges';
 
 export const ProviderDetailView: React.FC = () => {
   const {
@@ -30,6 +41,10 @@ export const ProviderDetailView: React.FC = () => {
     getProviderSubscription,
     subscriptionPlans,
     interactions,
+    disclosures,
+    providerReports,
+    confirmedInterviews,
+    effectiveReferenceDate,
     toggleUserFavoriteProvider,
     updateUserFavoriteNote,
     openChatWith,
@@ -75,13 +90,24 @@ export const ProviderDetailView: React.FC = () => {
   }
 
   const { profile, availability } = providerBundle;
-  const match = calculateMatchResult(currentUserBundle, providerBundle);
+  const match = calculateMatchResult(
+    currentUserBundle,
+    providerBundle,
+    effectiveReferenceDate
+  );
   const subscription = getProviderSubscription(providerId);
   const isPaid = isPaidPlanActive(subscription, subscriptionPlans);
   const isFavorite = Boolean(interaction?.isUserFavorite);
   const disclosure = getDisclosureStage(activeUserId, providerId);
   const userPii = userPIIList.find((p) => p.userId === activeUserId);
   const updatedAt = profile.updatedAt || availability.updatedAt;
+  const freshness = getProviderFreshnessInfo(updatedAt, effectiveReferenceDate);
+  const discrepancy = getProviderDiscrepancySummary(providerId, providerReports);
+  const interviewTrust = getProviderInterviewTrustBadge(
+    providerId,
+    confirmedInterviews,
+    disclosures
+  );
   const hasDesignatedNumber = /^\d{10}$/.test(
     (profile.designatedNumber || '').replace(/[-\s]/g, '')
   );
@@ -160,6 +186,9 @@ export const ProviderDetailView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-200 pb-5">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2 text-xs">
+              <ProviderFreshnessBadge info={freshness} />
+              <ProviderReportWarningBadge summary={discrepancy} />
+              <ProviderInterviewTrustBadge info={interviewTrust} />
               {hasDesignatedNumber && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-950 font-bold tabular-nums">
                   <BadgeCheck className="w-3.5 h-3.5 text-teal-700" aria-hidden="true" />
@@ -170,12 +199,6 @@ export const ProviderDetailView: React.FC = () => {
                 <Clock className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
                 <span>最終更新日：{formatJapaneseDate(updatedAt)}</span>
               </span>
-              {match.isStaleProvider && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-300 text-amber-950 font-bold tabular-nums">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700" aria-hidden="true" />
-                  <span>情報が古い可能性があります（{match.daysSinceUpdate}日経過）</span>
-                </span>
-              )}
             </div>
 
             <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">
@@ -196,6 +219,16 @@ export const ProviderDetailView: React.FC = () => {
           </div>
         </div>
 
+        {freshness.isAutoPaused && freshness.pauseNoticeText && (
+          <div
+            data-testid="detail-paused-banner"
+            className="p-3.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-950 text-xs sm:text-sm font-extrabold flex items-center gap-2"
+          >
+            <PauseCircle className="w-4 h-4 text-rose-700 shrink-0" aria-hidden="true" />
+            <span>受付確認中：{freshness.pauseNoticeText}</span>
+          </div>
+        )}
+
         <p className="text-base text-slate-800 leading-relaxed">
           {profile.introduction}
         </p>
@@ -214,11 +247,20 @@ export const ProviderDetailView: React.FC = () => {
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
           <button
             type="button"
+            disabled={freshness.isAutoPaused}
             onClick={() => openChatWith(profile.id)}
-            className="flex-1 min-h-[50px] px-6 py-3 rounded-xl bg-teal-800 hover:bg-teal-900 text-white font-bold text-base flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+            className={`flex-1 min-h-[50px] px-6 py-3 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-xs ${
+              freshness.isAutoPaused
+                ? 'bg-slate-200 border border-slate-300 text-slate-500 cursor-not-allowed'
+                : 'bg-teal-800 hover:bg-teal-900 text-white cursor-pointer'
+            }`}
           >
             <MessageSquare className="w-5 h-5" aria-hidden="true" />
-            <span>匿名チャットで相談する</span>
+            <span>
+              {freshness.isAutoPaused
+                ? '受付確認中（再開まで停止）'
+                : '匿名チャットで相談する'}
+            </span>
           </button>
 
           <button
@@ -292,6 +334,7 @@ export const ProviderDetailView: React.FC = () => {
           matchingPoints={match.matchingPoints}
           isPaidHighlighted={isPaid}
           hideHeaderMeta={true}
+          referenceDate={effectiveReferenceDate}
         />
         {availability.acceptableConditionsNote && (
           <p className="text-xs sm:text-sm text-slate-600 px-1">

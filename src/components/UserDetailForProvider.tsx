@@ -13,11 +13,16 @@ import {
   UserPII,
 } from '../types/domain';
 import { getCurrentYearMonth } from '../utils/date';
+import { getUserFreshnessInfo } from '../utils/freshness';
 import { calculateMatchResult } from '../utils/matching';
 import { verifyProviderChatAccess } from '../utils/subscription';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
 import { buildUserDetailForProviderSpeechText } from '../utils/speech';
+import {
+  UserConfirmedDateBadge,
+  UserRecruitmentStatusBadge,
+} from './FreshnessBadges';
 
 export const UserDetailForProvider: React.FC = () => {
   const {
@@ -39,6 +44,7 @@ export const UserDetailForProvider: React.FC = () => {
     openChatWith,
     setShowChatUpgradeModal,
     navigateTo,
+    effectiveReferenceDate,
   } = useAppState();
 
   const userId = selectedUserIdForDetail || 'user-001';
@@ -84,7 +90,12 @@ export const UserDetailForProvider: React.FC = () => {
   }
 
   const { profile, needs, preferences } = userBundle;
-  const match = calculateMatchResult(userBundle, currentProviderBundle);
+  const userFreshness = getUserFreshnessInfo(profile, effectiveReferenceDate);
+  const match = calculateMatchResult(
+    userBundle,
+    currentProviderBundle,
+    effectiveReferenceDate
+  );
   const interaction = interactions.find(
     (i) => i.userId === userId && i.providerId === activeProviderId
   );
@@ -106,7 +117,7 @@ export const UserDetailForProvider: React.FC = () => {
         plans: subscriptionPlans,
         chatRequest: chatReq,
         allProviderChatRequests: chatRequests,
-        currentYearMonth: getCurrentYearMonth(),
+        currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
       });
       if (!access.canRequestChat && !access.canSendMessage) {
         setShowChatUpgradeModal(true);
@@ -185,7 +196,11 @@ export const UserDetailForProvider: React.FC = () => {
       {/* 基本ヘッダー＆対応アクション */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-200 pb-5">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <UserRecruitmentStatusBadge info={userFreshness} />
+              <UserConfirmedDateBadge info={userFreshness} />
+            </div>
             <p className="text-sm font-bold text-teal-800">
               現在の情報開示段階：
               {disclosure.stage === 1

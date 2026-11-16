@@ -10,10 +10,12 @@ import {
   ChatMessage,
   ChatMessageKind,
   ChatRequest,
+  ConfirmedInterviewRecord,
   CoordinatorProfile,
   DisclosureConsent,
   DisclosureHistoryEntry,
   DisclosureStage,
+  DiscrepancyReportReason,
   MatchingInteraction,
   PendingMfaChallenge,
   ProviderAcceptanceStatus,
@@ -21,11 +23,13 @@ import {
   ProviderAvailability,
   ProviderBranch,
   ProviderCapabilities,
+  ProviderDiscrepancyReport,
   ProviderPaymentSummary,
   ProviderProfile,
   ProviderReactionStatus,
   ProviderStaffMember,
   ProviderSubscription,
+  ProviderUpdateHistoryEntry,
   ScheduleCandidateSlot,
   SharedCaseToCoordinator,
   SubscriptionPlanDefinition,
@@ -34,6 +38,7 @@ import {
   UserPII,
   UserPreferences,
   UserProfile,
+  UserRecruitmentStatus,
   UserSupportNeeds,
 } from '../types/domain';
 import {
@@ -44,13 +49,17 @@ import {
 } from '../utils/auth';
 import {
   addMonthsToIso,
+  daysSinceIsoDate,
+  formatJapaneseMonthOnly,
   getCurrentYearMonth,
+  getEffectiveReferenceDate,
   getNowDateTime,
   getTodayIso,
 } from '../utils/date';
 import {
   INITIAL_AUDIT_LOGS,
   INITIAL_CHAT_REQUESTS,
+  INITIAL_CONFIRMED_INTERVIEWS,
   INITIAL_COORDINATORS,
   INITIAL_CREDENTIALS,
   INITIAL_DISCLOSURES,
@@ -60,6 +69,7 @@ import {
   INITIAL_PROVIDER_AVAILABILITY,
   INITIAL_PROVIDER_CAPABILITIES,
   INITIAL_PROVIDER_PROFILES,
+  INITIAL_PROVIDER_REPORTS,
   INITIAL_PROVIDER_SUBSCRIPTIONS,
   INITIAL_SHARED_CASES,
   INITIAL_USER_NEEDS,
@@ -203,6 +213,10 @@ interface AppStateContextValue {
   messages: ChatMessage[];
   disclosures: DisclosureConsent[];
   disclosureHistory: DisclosureHistoryEntry[];
+  providerReports: ProviderDiscrepancyReport[];
+  confirmedInterviews: ConfirmedInterviewRecord[];
+  timeTravelDaysOffset: number;
+  effectiveReferenceDate: Date;
 
   // 相談支援専門員（無料ロール）
   coordinators: CoordinatorProfile[];
@@ -325,6 +339,27 @@ interface AppStateContextValue {
     status: ProviderAccountApprovalStatus
   ) => void;
   markProviderUpdatedToday: (providerId: string) => void;
+  markProviderNoChangeToday: (providerId: string) => {
+    previousUpdatedAt: string;
+    daysSincePrevious: number;
+    updatedAt: string;
+  };
+  confirmUserNeedsUnchanged: (userId: string) => {
+    confirmedAt: string;
+    daysSincePrevious: number;
+  };
+  setUserRecruitmentStatus: (
+    userId: string,
+    status: UserRecruitmentStatus
+  ) => void;
+  submitProviderReport: (params: {
+    providerId: string;
+    userId: string;
+    reason: DiscrepancyReportReason;
+    note?: string;
+  }) => { reportCount: number; isUnderReview: boolean };
+  advanceTimeByDays: (days?: number) => void;
+  resetTimeToToday: () => void;
   toggleProviderMatchFilter: (providerId: string) => void;
   addProviderStaffMember: (
     providerId: string,
@@ -454,6 +489,9 @@ function loadInitialPersistedOrSeed() {
     providerSubscriptions: INITIAL_PROVIDER_SUBSCRIPTIONS,
     chatRequests: INITIAL_CHAT_REQUESTS,
     accountCredentials: INITIAL_CREDENTIALS,
+    providerReports: INITIAL_PROVIDER_REPORTS,
+    confirmedInterviews: INITIAL_CONFIRMED_INTERVIEWS,
+    timeTravelDaysOffset: 0,
   };
 }
 
@@ -557,6 +595,17 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   const [accountCredentials, setAccountCredentials] = useState<
     AccountCredential[]
   >(initialData?.accountCredentials || []);
+  const [providerReports, setProviderReports] = useState<
+    ProviderDiscrepancyReport[]
+  >(initialData?.providerReports || []);
+  const [confirmedInterviews, setConfirmedInterviews] = useState<
+    ConfirmedInterviewRecord[]
+  >(initialData?.confirmedInterviews || []);
+  const [timeTravelDaysOffset, setTimeTravelDaysOffset] = useState<number>(
+    initialData?.timeTravelDaysOffset || 0
+  );
+
+  const effectiveReferenceDate = getEffectiveReferenceDate(timeTravelDaysOffset);
 
   // 認証セッション
   const [session, setSession] = useState<AuthSession>(() => ({
@@ -594,6 +643,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
           providerSubscriptions,
           chatRequests,
           accountCredentials,
+          providerReports,
+          confirmedInterviews,
+          timeTravelDaysOffset,
         })
       );
     } catch {
@@ -618,6 +670,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     providerSubscriptions,
     chatRequests,
     accountCredentials,
+    providerReports,
+    confirmedInterviews,
+    timeTravelDaysOffset,
   ]);
 
   const addAuditLog = (
@@ -985,8 +1040,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     const padded = String(newNum).padStart(3, '0');
     const newId = `user-${padded}-${Date.now().toString().slice(-3)}`;
     const newCode = `利用希望者${padded}`;
-    const today = getTodayIso();
-    const nowDt = getNowDateTime();
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowDt = getNowDateTime(effectiveReferenceDate);
 
     const newProfile: UserProfile = {
       id: newId,
@@ -998,6 +1053,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       registrantRole: input.registrantRole,
       certificateStatus: input.certificateStatus,
       registeredAt: `${today}（新規登録）`,
+      confirmedAt: today,
+      recruitmentStatus: '募集中',
       isNewArrival: true,
       briefSummaryForFreePlan: `${input.city}にて${input.desiredServices.join('・')}（${input.preferredDays.join('・')}曜）を希望`,
       familyShareToken: `fam_${newId}`,
@@ -1106,8 +1163,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     const newNum = providerProfiles.length + 1;
     const padded = String(newNum).padStart(3, '0');
     const newId = `prov-${padded}-${Date.now().toString().slice(-3)}`;
-    const today = getTodayIso();
-    const nowDt = getNowDateTime();
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowDt = getNowDateTime(effectiveReferenceDate);
     const cycle: BillingCycle = input.billingCycle || 'monthly';
 
     const newProfile: ProviderProfile = {
@@ -1150,6 +1207,17 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
           addressNote: `${input.locationCity}エリア`,
           serviceTypes: input.serviceTypes,
           isMain: true,
+        },
+      ],
+      updateHistory: [
+        {
+          id: `uh-${Date.now()}`,
+          providerId: newId,
+          updatedAt: today,
+          timestamp: nowDt,
+          actorName: input.contactPersonName || '管理者',
+          kind: 'content_updated',
+          summary: '事業所と受入条件カードを新規登録',
         },
       ],
     };
@@ -1756,11 +1824,35 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     );
   };
 
-  const markProviderUpdatedToday = (providerId: string) => {
-    const today = getTodayIso();
+  const markProviderNoChangeToday = (providerId: string) => {
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowDt = getNowDateTime(effectiveReferenceDate);
+    const target = providerProfiles.find((p) => p.id === providerId);
+    const previousUpdatedAt = target?.updatedAt || today;
+    const daysSincePrevious = daysSinceIsoDate(
+      previousUpdatedAt,
+      effectiveReferenceDate
+    );
+
+    const newEntry: ProviderUpdateHistoryEntry = {
+      id: `uh-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      providerId,
+      updatedAt: today,
+      timestamp: nowDt,
+      actorName: target?.contactPersonName || '事業所担当者',
+      kind: 'no_change',
+      summary: `内容に変更なし（前回の更新から${daysSincePrevious}日ぶりに更新）`,
+    };
+
     setProviderProfiles((prev) =>
       prev.map((p) =>
-        p.id === providerId ? { ...p, updatedAt: today } : p
+        p.id === providerId
+          ? {
+              ...p,
+              updatedAt: today,
+              updateHistory: [newEntry, ...(p.updateHistory || [])].slice(0, 20),
+            }
+          : p
       )
     );
     setProviderAvailabilities((prev) =>
@@ -1770,8 +1862,121 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `事業所情報・受入条件カードの最終更新日を本日（${today}）に更新`,
+      `事業所情報「内容に変更なし」で本日（${today}）へ更新（前回から${daysSincePrevious}日経過）`,
       providerId
+    );
+
+    return {
+      previousUpdatedAt,
+      daysSincePrevious,
+      updatedAt: today,
+    };
+  };
+
+  const markProviderUpdatedToday = (providerId: string) => {
+    markProviderNoChangeToday(providerId);
+  };
+
+  const confirmUserNeedsUnchanged = (userId: string) => {
+    const today = getTodayIso(effectiveReferenceDate);
+    const target = userProfiles.find((u) => u.id === userId);
+    const prevBase = target?.confirmedAt || target?.registeredAt || '';
+    const daysSincePrevious = prevBase
+      ? daysSinceIsoDate(prevBase, effectiveReferenceDate)
+      : 0;
+
+    setUserProfiles((prev) =>
+      prev.map((u) =>
+        u.id === userId
+          ? { ...u, confirmedAt: today, recruitmentStatus: '募集中' }
+          : u
+      )
+    );
+    addAuditLog(
+      'DATA_UPDATE_NEEDS',
+      `利用者が「希望は変わっていません」を確認し最新日（${today}）へ更新・募集中へ設定`,
+      userId
+    );
+    return {
+      confirmedAt: today,
+      daysSincePrevious,
+    };
+  };
+
+  const setUserRecruitmentStatus = (
+    userId: string,
+    status: UserRecruitmentStatus
+  ) => {
+    const today = getTodayIso(effectiveReferenceDate);
+    setUserProfiles((prev) =>
+      prev.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              recruitmentStatus: status,
+              confirmedAt: status === '募集中' ? today : u.confirmedAt,
+            }
+          : u
+      )
+    );
+    addAuditLog(
+      'DATA_UPDATE_NEEDS',
+      `利用者の募集状態を「${status}」へ変更 (${userId})`,
+      userId
+    );
+  };
+
+  const submitProviderReport = (params: {
+    providerId: string;
+    userId: string;
+    reason: DiscrepancyReportReason;
+    note?: string;
+  }) => {
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowDt = getNowDateTime(effectiveReferenceDate);
+    const newReport: ProviderDiscrepancyReport = {
+      id: `rep-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      providerId: params.providerId,
+      reporterUserId: params.userId,
+      reason: params.reason,
+      note: params.note?.trim() || undefined,
+      createdAt: today,
+      timestamp: nowDt,
+    };
+
+    const nextList = [newReport, ...providerReports];
+    setProviderReports(nextList);
+
+    const reportCount = nextList.filter(
+      (r) => r.providerId === params.providerId
+    ).length;
+
+    addAuditLog(
+      'ADMIN_SECURITY_EVENT',
+      `利用者より「情報と違った」報告を受信（理由: ${params.reason} / 累計${reportCount}件）`,
+      params.providerId,
+      reportCount >= 3
+    );
+
+    return {
+      reportCount,
+      isUnderReview: reportCount >= 3,
+    };
+  };
+
+  const advanceTimeByDays = (days: number = 30) => {
+    setTimeTravelDaysOffset((prev) => prev + days);
+    addAuditLog(
+      'ADMIN_ACCESS_CHECK',
+      `運営検証シミュレーター：経過日数を +${days}日 進めました`
+    );
+  };
+
+  const resetTimeToToday = () => {
+    setTimeTravelDaysOffset(0);
+    addAuditLog(
+      'ADMIN_ACCESS_CHECK',
+      '運営検証シミュレーター：日付シミュレーションを今日（+0日）に戻しました'
     );
   };
 
@@ -2015,9 +2220,15 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const saveUserBundle = (bundle: FullUserBundle, pii?: Partial<UserPII>) => {
-    const nowStr = getNowDateTime();
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowStr = getNowDateTime(effectiveReferenceDate);
+    const stampedProfile: UserProfile = {
+      ...bundle.profile,
+      confirmedAt: today,
+      recruitmentStatus: bundle.profile.recruitmentStatus || '募集中',
+    };
     setUserProfiles((prev) =>
-      prev.map((u) => (u.id === bundle.profile.id ? bundle.profile : u))
+      prev.map((u) => (u.id === bundle.profile.id ? stampedProfile : u))
     );
     setUserNeeds((prev) =>
       prev.map((n) => (n.userId === bundle.needs.userId ? bundle.needs : n))
@@ -2038,15 +2249,32 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     addAuditLog(
       'DATA_UPDATE_PROFILE',
-      `利用者プロファイル・特性プロフィール・希望条件を保存 (${bundle.profile.id})`
+      `利用者プロファイル・特性プロフィール・希望条件を保存（確認日: ${today} / ${bundle.profile.id}）`
     );
   };
 
   const saveProviderBundle = (bundle: FullProviderBundle) => {
-    const today = getTodayIso();
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowDt = getNowDateTime(effectiveReferenceDate);
+    const entry: ProviderUpdateHistoryEntry = {
+      id: `uh-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      providerId: bundle.profile.id,
+      updatedAt: today,
+      timestamp: nowDt,
+      actorName: bundle.profile.contactPersonName || '事業所担当者',
+      kind: 'content_updated',
+      summary: '受入条件カード・受け入れ内容を更新',
+    };
+
+    const existingHist =
+      providerProfiles.find((p) => p.id === bundle.profile.id)?.updateHistory ||
+      bundle.profile.updateHistory ||
+      [];
+
     const updatedProfile: ProviderProfile = {
       ...bundle.profile,
       updatedAt: today,
+      updateHistory: [entry, ...existingHist].slice(0, 20),
     };
     const updatedAvailability: ProviderAvailability = {
       ...bundle.availability,
@@ -2078,9 +2306,28 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     status: ProviderAcceptanceStatus,
     note?: string
   ) => {
-    const today = getTodayIso();
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowDt = getNowDateTime(effectiveReferenceDate);
+    const target = providerProfiles.find((p) => p.id === providerId);
+    const entry: ProviderUpdateHistoryEntry = {
+      id: `uh-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      providerId,
+      updatedAt: today,
+      timestamp: nowDt,
+      actorName: target?.contactPersonName || '事業所担当者',
+      kind: 'content_updated',
+      summary: `受け入れ状況を変更（${status}）`,
+    };
     setProviderProfiles((prev) =>
-      prev.map((p) => (p.id === providerId ? { ...p, updatedAt: today } : p))
+      prev.map((p) =>
+        p.id === providerId
+          ? {
+              ...p,
+              updatedAt: today,
+              updateHistory: [entry, ...(p.updateHistory || [])].slice(0, 20),
+            }
+          : p
+      )
     );
     setProviderAvailabilities((prev) =>
       prev.map((a) =>
@@ -2260,7 +2507,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     kind: 'interview' | 'visit';
     slot: ScheduleCandidateSlot;
   }) => {
-    const nowStr = getNowDateTime();
+    const today = getTodayIso(effectiveReferenceDate);
+    const nowStr = getNowDateTime(effectiveReferenceDate);
     const kindLabel = params.kind === 'visit' ? '見学' : '面談';
     const summary = `${kindLabel}：${params.slot.day}曜 ${params.slot.timeSlot}`;
 
@@ -2275,6 +2523,16 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         confirmedSlot: params.slot,
       }
     );
+
+    const interviewRecord: ConfirmedInterviewRecord = {
+      id: `ci-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      providerId: params.providerId,
+      userId: params.userId,
+      confirmedAt: today,
+      confirmedMonthLabel: formatJapaneseMonthOnly(today) || '今月',
+      kind: params.kind,
+    };
+    setConfirmedInterviews((prev) => [interviewRecord, ...prev]);
 
     setDisclosures((prev) => {
       const existing = prev.find(
@@ -2585,6 +2843,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     setProviderSubscriptions([]);
     setChatRequests([]);
     setAccountCredentials([]);
+    setProviderReports([]);
+    setConfirmedInterviews([]);
+    setTimeTravelDaysOffset(0);
     setPendingMfaChallenge(null);
     setActiveUserId('');
     setActiveProviderId('');
@@ -2618,6 +2879,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     setProviderSubscriptions(INITIAL_PROVIDER_SUBSCRIPTIONS);
     setChatRequests(INITIAL_CHAT_REQUESTS);
     setAccountCredentials(INITIAL_CREDENTIALS);
+    setProviderReports(INITIAL_PROVIDER_REPORTS);
+    setConfirmedInterviews(INITIAL_CONFIRMED_INTERVIEWS);
+    setTimeTravelDaysOffset(0);
     setActiveUserId(INITIAL_USER_PROFILES[0].id);
     setActiveProviderId(INITIAL_PROVIDER_PROFILES[0].id);
     setActiveCoordinatorId(INITIAL_COORDINATORS[0].id);
@@ -2653,6 +2917,10 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         messages,
         disclosures,
         disclosureHistory,
+        providerReports,
+        confirmedInterviews,
+        timeTravelDaysOffset,
+        effectiveReferenceDate,
         coordinators,
         sharedCases,
         currentCoordinator,
@@ -2717,6 +2985,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
         updatePlanMonthlyPrice,
         updateProviderApprovalStatus,
         markProviderUpdatedToday,
+        markProviderNoChangeToday,
+        confirmUserNeedsUnchanged,
+        setUserRecruitmentStatus,
+        submitProviderReport,
+        advanceTimeByDays,
+        resetTimeToToday,
         toggleProviderMatchFilter,
         addProviderStaffMember,
         removeProviderStaffMember,

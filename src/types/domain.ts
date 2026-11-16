@@ -143,6 +143,8 @@ export interface UserPII {
 /**
  * データ領域 B: 支援ニーズ・照合用公開情報 (Public Matching Profile)
  */
+export type UserRecruitmentStatus = '募集中' | '休止中';
+
 export interface UserProfile {
   id: string;
   anonymousCode: string;
@@ -153,6 +155,10 @@ export interface UserProfile {
   registrantRole: RegistrantRole;
   certificateStatus: CertificateStatus;
   registeredAt?: string;
+  /** 希望条件・特性プロフィールの最終確認日（YYYY-MM-DD） */
+  confirmedAt?: string;
+  /** 募集状態（90日以上未確認で自動的に「休止中」扱い） */
+  recruitmentStatus?: UserRecruitmentStatus;
   isNewArrival?: boolean;
   briefSummaryForFreePlan?: string;
   familyShareToken?: string;
@@ -250,6 +256,23 @@ export interface ProviderBranch {
   isMain: boolean;
 }
 
+export type ProviderUpdateKind = 'no_change' | 'content_updated';
+
+export interface ProviderUpdateHistoryEntry {
+  id: string;
+  providerId: string;
+  /** 更新日付（YYYY-MM-DD） */
+  updatedAt: string;
+  /** 更新日時（YYYY-MM-DD HH:mm） */
+  timestamp: string;
+  /** 操作担当者名 */
+  actorName: string;
+  /** 変更種別 */
+  kind: ProviderUpdateKind;
+  /** 任意の要約 */
+  summary?: string;
+}
+
 export interface ProviderProfile {
   id: string;
   name: string;
@@ -273,6 +296,8 @@ export interface ProviderProfile {
   staffMembers?: ProviderStaffMember[];
   /** 上位プラン：複数拠点管理 */
   branches?: ProviderBranch[];
+  /** 鮮度管理：更新履歴 */
+  updateHistory?: ProviderUpdateHistoryEntry[];
 }
 
 export interface ProviderCapabilities {
@@ -600,6 +625,39 @@ export interface MatchResult {
   summaryText: string;
   isStaleProvider?: boolean;
   daysSinceUpdate?: number;
+  freshnessTier?: 'fresh' | 'warning' | 'paused';
+}
+
+export type DiscrepancyReportReason =
+  | '受入条件が実際と違った'
+  | 'すでに受付を終了していた'
+  | '連絡がつかなかった'
+  | 'その他';
+
+export const DISCREPANCY_REPORT_REASONS: DiscrepancyReportReason[] = [
+  '受入条件が実際と違った',
+  'すでに受付を終了していた',
+  '連絡がつかなかった',
+  'その他',
+];
+
+export interface ProviderDiscrepancyReport {
+  id: string;
+  providerId: string;
+  reporterUserId: string;
+  reason: DiscrepancyReportReason;
+  note?: string;
+  createdAt: string;
+  timestamp: string;
+}
+
+export interface ConfirmedInterviewRecord {
+  id: string;
+  providerId: string;
+  userId: string;
+  confirmedAt: string;
+  confirmedMonthLabel: string;
+  kind: 'interview' | 'visit';
 }
 
 // ==============================================================================

@@ -19,6 +19,9 @@ import {
   BarChart3,
   Trash2,
   Filter,
+  History,
+  CheckCircle2,
+  PauseCircle,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -29,11 +32,15 @@ import {
 } from '../types/domain';
 import { calculateMatchResult } from '../utils/matching';
 import {
-  daysSinceIsoDate,
   formatJapaneseDate,
   getCurrentYearMonth,
-  isProviderStale,
 } from '../utils/date';
+import {
+  getProviderDiscrepancySummary,
+  getProviderFreshnessInfo,
+  getProviderInterviewTrustBadge,
+  getUserFreshnessInfo,
+} from '../utils/freshness';
 import {
   calculateRegionalDemandAnalytics,
   CORE_SUBSCRIPTION_MESSAGE,
@@ -52,6 +59,13 @@ import {
   StepScheduleIcon,
   WeeklyDayStrip,
 } from './VisualHelpers';
+import {
+  ProviderFreshnessBadge,
+  ProviderInterviewTrustBadge,
+  ProviderReportWarningBadge,
+  UserConfirmedDateBadge,
+  UserRecruitmentStatusBadge,
+} from './FreshnessBadges';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
 import {
@@ -92,7 +106,10 @@ export const ProviderDashboard: React.FC = () => {
     isCurrentProviderPaid,
     getProviderSubscription,
     subscribeProviderToPlan,
-    markProviderUpdatedToday,
+    markProviderNoChangeToday,
+    effectiveReferenceDate,
+    providerReports,
+    confirmedInterviews,
     toggleProviderMatchFilter,
     addProviderStaffMember,
     removeProviderStaffMember,
@@ -148,8 +165,19 @@ export const ProviderDashboard: React.FC = () => {
 
   const { profile, capabilities, availability } = currentProviderBundle;
   const updatedAt = profile.updatedAt || availability.updatedAt;
-  const staleProvider = isProviderStale(updatedAt);
-  const daysElapsed = daysSinceIsoDate(updatedAt);
+  const freshnessInfo = getProviderFreshnessInfo(
+    updatedAt,
+    effectiveReferenceDate
+  );
+  const discrepancySummary = getProviderDiscrepancySummary(
+    activeProviderId,
+    providerReports
+  );
+  const interviewTrust = getProviderInterviewTrustBadge(
+    activeProviderId,
+    confirmedInterviews,
+    disclosures
+  );
   const hasDesignatedNumber = /^\d{10}$/.test(
     (profile.designatedNumber || '').replace(/[-\s]/g, '')
   );
@@ -162,14 +190,19 @@ export const ProviderDashboard: React.FC = () => {
     subscription: currentProviderSubscription,
     plans: subscriptionPlans,
     allProviderChatRequests: chatRequests,
-    currentYearMonth: getCurrentYearMonth(),
+    currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
   });
 
   const allEvaluatedMatches = userProfiles
     .map((u) => {
       const uBundle = getUserBundleById(u.id);
       if (!uBundle) return null;
-      const result = calculateMatchResult(uBundle, currentProviderBundle);
+      const result = calculateMatchResult(
+        uBundle,
+        currentProviderBundle,
+        effectiveReferenceDate
+      );
+      const userFreshness = getUserFreshnessInfo(u, effectiveReferenceDate);
       const interaction = interactions.find(
         (i) => i.userId === u.id && i.providerId === activeProviderId
       );
@@ -186,6 +219,7 @@ export const ProviderDashboard: React.FC = () => {
       });
       return {
         user: uBundle,
+        userFreshness,
         result,
         caseStatus: interaction?.caseStatus || '未対応',
         chatReq,
@@ -193,9 +227,12 @@ export const ProviderDashboard: React.FC = () => {
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
-    .sort(
-      (a, b) => b.result.breakdown.totalScore - a.result.breakdown.totalScore
-    );
+    .sort((a, b) => {
+      if (a.userFreshness.effectiveStatus !== b.userFreshness.effectiveStatus) {
+        return a.userFreshness.effectiveStatus === '募集中' ? -1 : 1;
+      }
+      return b.result.breakdown.totalScore - a.result.breakdown.totalScore;
+    });
 
   const candidateMatches =
     isCurrentProviderPaid && profile.filterOnlyMatchingRequests
@@ -261,12 +298,13 @@ export const ProviderDashboard: React.FC = () => {
     }));
   };
 
-  const handleMarkUpdatedToday = () => {
-    markProviderUpdatedToday(activeProviderId);
+  const handleNoChangeUpdateToday = () => {
+    const res = markProviderNoChangeToday(activeProviderId);
     setSentNotice(
-      '事業所情報・受入条件カードの「最終更新日」を本日に更新しました。利用者検索でも最新順で表示されます。'
+      `更新しました。前回の更新から${res.daysSincePrevious}日ぶりです（最新確認日：${formatJapaneseDate(
+        res.updatedAt
+      )}）。`
     );
-    setTimeout(() => setSentNotice(''), 5000);
   };
 
   const handleQuickChatRequest = (userId: string, anonymousCode: string) => {
@@ -278,7 +316,7 @@ export const ProviderDashboard: React.FC = () => {
       plans: subscriptionPlans,
       chatRequest: existingReq,
       allProviderChatRequests: chatRequests,
-      currentYearMonth: getCurrentYearMonth(),
+      currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
     });
     if (!access.canRequestChat && !access.canSendMessage) {
       setShowChatUpgradeModal(true);
@@ -328,6 +366,43 @@ export const ProviderDashboard: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
+      {/* 鮮度アラートバナー（61日以上で受付確認中 ／ 25日以上でそろそろ確認時期） */}
+      {freshnessInfo.isAutoPaused ? (
+        <div
+          role="alert"
+          data-testid="provider-paused-banner"
+          className="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 text-xs sm:text-sm">
+            <PauseCircle className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-0.5">
+              <p className="font-extrabold">
+                現在「受付確認中」のため、利用者側でチャット受付が一時停止されています（{freshnessInfo.daysElapsed}日未更新）
+              </p>
+              <p className="text-rose-900">
+                「内容に変更なし（今日の日付で更新）」を押すか、受入条件を保存するとすぐに通常表示へ再開します。
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : freshnessInfo.isApproachingReminder ? (
+        <div
+          role="status"
+          data-testid="provider-freshness-reminder-banner"
+          className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 text-xs sm:text-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-0.5">
+              <p className="font-extrabold">そろそろ情報の確認時期です</p>
+              <p className="text-amber-900">
+                前回の更新から {freshnessInfo.daysElapsed}日 経過しています。変更がなければ下の「内容に変更なし（今日の日付で更新）」ボタンを1タップで完了できます。
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* 1. 事業所マイページ・更新鮮度＆進捗ボード */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
         <div className="flex flex-col gap-3.5 border-b border-slate-100 pb-4">
@@ -371,26 +446,34 @@ export const ProviderDashboard: React.FC = () => {
                 <Clock className="w-3.5 h-3.5 text-slate-500" />
                 <span>最終更新日：{formatJapaneseDate(updatedAt)}</span>
               </span>
-              {staleProvider && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-300 text-amber-950 font-bold tabular-nums">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
-                  <span>情報が古い可能性があります（{daysElapsed}日経過）</span>
-                </span>
-              )}
+              <ProviderFreshnessBadge info={freshnessInfo} />
+              <ProviderReportWarningBadge summary={discrepancySummary} />
+              <ProviderInterviewTrustBadge info={interviewTrust} />
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* 目立つ「情報を更新する」ボタン */}
+          {/* 1タップ鮮度更新アクション（確認ダイアログなし） */}
+          <div className="p-3.5 rounded-xl bg-teal-50/70 border border-teal-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5 text-xs">
+              <p className="font-extrabold text-teal-950">
+                1タップ情報更新（更新が新しい事業所ほど検索上位に表示されます）
+              </p>
+              <p className="text-teal-900">
+                現在の受入条件・空き状況に変更がない場合は、確認ダイアログなしで即座に本日付で更新できます。
+              </p>
+            </div>
             <button
               type="button"
-              data-testid="provider-update-today-btn"
-              onClick={handleMarkUpdatedToday}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
+              data-testid="provider-no-change-update-btn"
+              onClick={handleNoChangeUpdateToday}
+              className="min-h-[48px] px-5 py-2.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-sm font-extrabold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shadow-xs shrink-0"
             >
-              <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>情報を更新する</span>
+              <RefreshCw className="w-4 h-4" aria-hidden="true" />
+              <span>内容に変更なし（今日の日付で更新）</span>
             </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
 
             {providerProfiles.length > 1 && (
               <select
@@ -541,9 +624,11 @@ export const ProviderDashboard: React.FC = () => {
       {sentNotice && (
         <div
           role="status"
-          className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs sm:text-sm font-bold"
+          data-testid="provider-update-feedback"
+          className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs sm:text-sm font-extrabold flex items-center gap-2"
         >
-          {sentNotice}
+          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
+          <span>{sentNotice}</span>
         </div>
       )}
 
@@ -740,72 +825,85 @@ export const ProviderDashboard: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {candidateMatches.map(({ user, result, caseStatus, chatReq }) => {
-              const stage:
-                | 'unapproached'
-                | 'considering'
-                | 'pending'
-                | 'active'
-                | 'declined' =
-                caseStatus === '対応不可' || chatReq?.status === 'declined'
-                  ? 'declined'
-                  : caseStatus === '対応中' || chatReq?.status === 'approved'
-                  ? 'active'
-                  : chatReq?.status === 'pending'
-                  ? 'pending'
-                  : caseStatus === '検討中'
-                  ? 'considering'
-                  : 'unapproached';
+            {candidateMatches.map(
+              ({ user, userFreshness, result, caseStatus, chatReq }) => {
+                const isUserPaused = userFreshness.effectiveStatus === '休止中';
+                const stage:
+                  | 'unapproached'
+                  | 'considering'
+                  | 'pending'
+                  | 'active'
+                  | 'declined' =
+                  caseStatus === '対応不可' || chatReq?.status === 'declined'
+                    ? 'declined'
+                    : caseStatus === '対応中' || chatReq?.status === 'approved'
+                    ? 'active'
+                    : chatReq?.status === 'pending'
+                    ? 'pending'
+                    : caseStatus === '検討中'
+                    ? 'considering'
+                    : 'unapproached';
 
-              const disc = disclosures.find(
-                (d) =>
-                  d.userId === user.profile.id &&
-                  d.providerId === activeProviderId
-              );
+                const disc = disclosures.find(
+                  (d) =>
+                    d.userId === user.profile.id &&
+                    d.providerId === activeProviderId
+                );
 
-              return (
-                <div
-                  key={user.profile.id}
-                  className="border border-slate-200 rounded-2xl p-4 flex flex-col justify-between gap-3 bg-slate-50/50"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-bold text-indigo-800">
-                            {user.needs.desiredServices.join(' / ')}
-                          </span>
-                          <NotificationStatusBadge
-                            status={
-                              chatReq?.status === 'approved'
-                                ? 'completed'
-                                : chatReq?.status === 'pending'
-                                ? 'pending'
-                                : 'new'
-                            }
-                            customLabel={
-                              chatReq?.status === 'approved'
-                                ? 'チャット開通'
-                                : chatReq?.status === 'pending'
-                                ? '承認待ち'
-                                : '新着'
-                            }
-                            size="sm"
-                          />
-                        </div>
-                        <h3 className="text-base font-bold text-slate-900 mt-0.5">
-                          {user.profile.anonymousCode}（{user.profile.city}）
-                        </h3>
-                        <span className="text-xs text-slate-500">
-                          第{disc?.stage || 1}段階 ／ 希望：{user.preferences.preferredDays.join('・')}曜
-                        </span>
+                return (
+                  <div
+                    key={user.profile.id}
+                    className={`border rounded-2xl p-4 flex flex-col justify-between gap-3 ${
+                      isUserPaused
+                        ? 'border-slate-300 bg-slate-100/80 opacity-75'
+                        : 'border-slate-200 bg-slate-50/50'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <UserRecruitmentStatusBadge
+                          info={userFreshness}
+                          showAutoReason={false}
+                        />
+                        <UserConfirmedDateBadge info={userFreshness} />
                       </div>
-                      <MatchScoreRing
-                        score={result.breakdown.totalScore}
-                        judgment={result.judgment}
-                        size="sm"
-                      />
-                    </div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-bold text-indigo-800">
+                              {user.needs.desiredServices.join(' / ')}
+                            </span>
+                            <NotificationStatusBadge
+                              status={
+                                chatReq?.status === 'approved'
+                                  ? 'completed'
+                                  : chatReq?.status === 'pending'
+                                  ? 'pending'
+                                  : 'new'
+                              }
+                              customLabel={
+                                chatReq?.status === 'approved'
+                                  ? 'チャット開通'
+                                  : chatReq?.status === 'pending'
+                                  ? '承認待ち'
+                                  : '新着'
+                              }
+                              size="sm"
+                            />
+                          </div>
+                          <h3 className="text-base font-bold text-slate-900 mt-0.5">
+                            {user.profile.anonymousCode}（{user.profile.city}）
+                          </h3>
+                          <span className="text-xs text-slate-500">
+                            第{disc?.stage || 1}段階 ／ 希望：{user.preferences.preferredDays.join('・')}曜
+                          </span>
+                        </div>
+                        <MatchScoreRing
+                          score={result.breakdown.totalScore}
+                          judgment={result.judgment}
+                          size="sm"
+                        />
+                      </div>
 
                     <CandidateCaseProgressBar stage={stage} />
 
@@ -1108,6 +1206,62 @@ export const ProviderDashboard: React.FC = () => {
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
             ※上位プランへアップグレードすると、地域別の利用希望傾向（サービス・エリア・曜日の需要分析）を確認して受け入れ体制の計画に役立てられます。
           </div>
+        )}
+      </section>
+
+      {/* 6. 情報の更新履歴（鮮度管理ログ） */}
+      <section
+        data-testid="provider-update-history"
+        className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-2xs"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <History className="w-5 h-5 text-teal-800" aria-hidden="true" />
+            <h2 className="text-base font-bold text-slate-900">
+              直近の更新履歴（{profile.updateHistory?.length || 0}件）
+            </h2>
+          </div>
+          {discrepancySummary.count > 0 && (
+            <span className="text-xs font-bold text-rose-800 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg">
+              利用者からの情報確認報告：{discrepancySummary.count}件
+            </span>
+          )}
+        </div>
+
+        {!profile.updateHistory || profile.updateHistory.length === 0 ? (
+          <p className="text-xs text-slate-600">
+            まだ更新履歴はありません。「内容に変更なし（今日の日付で更新）」または受入条件の編集保存を行うとここに記録されます。
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {profile.updateHistory.slice(0, 6).map((item) => (
+              <li
+                key={item.id}
+                className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-slate-600 tabular-nums">
+                    {item.timestamp}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-md font-bold border ${
+                      item.kind === 'no_change'
+                        ? 'bg-teal-50 border-teal-200 text-teal-900'
+                        : 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                    }`}
+                  >
+                    {item.kind === 'no_change' ? '変更なし' : '内容変更'}
+                  </span>
+                  <span className="font-bold text-slate-800">
+                    {item.actorName}
+                  </span>
+                </div>
+                {item.summary && (
+                  <span className="text-slate-600">{item.summary}</span>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>

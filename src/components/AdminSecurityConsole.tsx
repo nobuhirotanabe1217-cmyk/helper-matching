@@ -18,10 +18,27 @@ import {
   CreditCard,
   MapPin,
   Sliders,
+  Clock,
+  FastForward,
+  RotateCcw,
+  Flag,
+  PauseCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import { calculateAdminBusinessMetrics } from '../utils/subscription';
+import {
+  calculateFreshnessDashboardMetrics,
+  getUserFreshnessInfo,
+} from '../utils/freshness';
+import { formatIsoDate, formatJapaneseDate } from '../utils/date';
 import { ProviderAccountApprovalStatus } from '../types/domain';
+import {
+  ProviderFreshnessBadge,
+  ProviderReportWarningBadge,
+  UserConfirmedDateBadge,
+  UserRecruitmentStatusBadge,
+} from './FreshnessBadges';
 import { HelpTooltip } from './HelpTooltip';
 
 export const AdminSecurityConsole: React.FC = () => {
@@ -40,6 +57,11 @@ export const AdminSecurityConsole: React.FC = () => {
     subscriptionPlans,
     chatRequests,
     interactions,
+    providerReports,
+    effectiveReferenceDate,
+    timeTravelDaysOffset,
+    advanceTimeByDays,
+    resetTimeToToday,
     updatePlanMonthlyPrice,
     updateProviderApprovalStatus,
     subscribeProviderToPlan,
@@ -47,7 +69,7 @@ export const AdminSecurityConsole: React.FC = () => {
   } = useAppState();
 
   const [activeTab, setActiveTab] = useState<
-    'business' | 'overview' | 'audit' | 'separation' | 'production_gap'
+    'business' | 'freshness' | 'overview' | 'audit' | 'separation' | 'production_gap'
   >('business');
 
   const [filterAction, setFilterAction] = useState<string>('all');
@@ -67,6 +89,13 @@ export const AdminSecurityConsole: React.FC = () => {
     plans: subscriptionPlans,
     chatRequests,
     interactions,
+  });
+
+  const freshnessMetrics = calculateFreshnessDashboardMetrics({
+    providers: providerProfiles,
+    users: userProfiles,
+    reports: providerReports,
+    referenceDate: effectiveReferenceDate,
   });
 
   const projectedMonthlyRevenueAt50 = metrics.simulatedTarget50RevenueYen;
@@ -129,6 +158,49 @@ export const AdminSecurityConsole: React.FC = () => {
           </div>
         </div>
 
+        {/* 時間のシミュレーションバー（デモ・検証用） */}
+        <div
+          data-testid="admin-time-sim-bar"
+          className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="space-y-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-amber-950">
+                <Clock className="w-4 h-4 text-amber-800 shrink-0" aria-hidden="true" />
+                テスト用の基準日シミュレーション
+              </span>
+              <span className="px-2 py-0.5 rounded bg-white border border-amber-300 text-xs font-mono font-bold text-slate-900 tabular-nums">
+                現在：{formatJapaneseDate(formatIsoDate(effectiveReferenceDate))}
+                {timeTravelDaysOffset > 0 ? `（+${timeTravelDaysOffset}日進行中）` : '（実日付）'}
+              </span>
+            </div>
+            <p className="text-xs text-amber-900">
+              「時間を進める（+30日）」を押すと、30日以上未更新・61日以上の受付確認中・90日以上の利用者休止中への切替を即時確認できます。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="admin-advance-30d-btn"
+              onClick={() => advanceTimeByDays(30)}
+              className="min-h-[42px] px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <FastForward className="w-4 h-4" aria-hidden="true" />
+              <span>時間を進める（+30日）</span>
+            </button>
+            <button
+              type="button"
+              data-testid="admin-reset-today-btn"
+              disabled={timeTravelDaysOffset === 0}
+              onClick={resetTimeToToday}
+              className="min-h-[42px] px-3.5 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-100 text-amber-950 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RotateCcw className="w-4 h-4" aria-hidden="true" />
+              <span>今日に戻す</span>
+            </button>
+          </div>
+        </div>
+
         {/* タブナビゲーション */}
         <div className="flex flex-wrap gap-2 pt-1">
           <button
@@ -144,6 +216,18 @@ export const AdminSecurityConsole: React.FC = () => {
           </button>
           <button
             type="button"
+            data-testid="admin-tab-freshness"
+            onClick={() => setActiveTab('freshness')}
+            className={`min-h-[44px] px-4 py-2 rounded-xl text-sm font-bold cursor-pointer transition-colors ${
+              activeTab === 'freshness'
+                ? 'bg-emerald-800 text-white'
+                : 'bg-emerald-50 text-emerald-950 border border-emerald-300 hover:bg-emerald-100'
+            }`}
+          >
+            2. 鮮度ダッシュボード（更新率 {freshnessMetrics.updateRatePercent}%）
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('overview')}
             className={`min-h-[44px] px-4 py-2 rounded-xl text-sm font-bold cursor-pointer transition-colors ${
               activeTab === 'overview'
@@ -151,7 +235,7 @@ export const AdminSecurityConsole: React.FC = () => {
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            2. セキュリティ概要
+            3. セキュリティ概要
           </button>
           <button
             type="button"
@@ -162,7 +246,7 @@ export const AdminSecurityConsole: React.FC = () => {
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            3. 個人情報分離管理（A/B構造）
+            4. 個人情報分離管理（A/B構造）
           </button>
           <button
             type="button"
@@ -173,7 +257,7 @@ export const AdminSecurityConsole: React.FC = () => {
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            4. 監査ログ（{auditLogs.length}件）
+            5. 監査ログ（{auditLogs.length}件）
           </button>
           <button
             type="button"
@@ -184,7 +268,7 @@ export const AdminSecurityConsole: React.FC = () => {
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            5. 本番移行・実装状況整理
+            6. 本番移行・実装状況整理
           </button>
         </div>
 
@@ -589,6 +673,247 @@ export const AdminSecurityConsole: React.FC = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* ==================== TAB: 鮮度ダッシュボード ==================== */}
+      {activeTab === 'freshness' && (
+        <div data-testid="admin-freshness-dashboard" className="space-y-6">
+          {/* 4つの鮮度KPIカード */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border-2 border-emerald-600 rounded-2xl p-4 space-y-1">
+              <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700" aria-hidden="true" />
+                事業所の30日以内更新率
+              </span>
+              <p
+                data-testid="admin-freshness-rate"
+                className="text-3xl font-extrabold font-mono tabular-nums text-emerald-900"
+              >
+                {freshnessMetrics.updateRatePercent}%
+              </p>
+              <p className="text-xs text-slate-600">
+                {freshnessMetrics.updatedWithin30Count} / {freshnessMetrics.totalProviders}{' '}
+                事業所が30日以内に更新済み
+              </p>
+            </div>
+
+            <div className="bg-white border border-amber-300 rounded-2xl p-4 space-y-1">
+              <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-amber-700" aria-hidden="true" />
+                未更新・受付確認中（31日以上）
+              </span>
+              <p className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+                {freshnessMetrics.warningProvidersCount + freshnessMetrics.pausedProvidersCount}{' '}
+                <span className="text-xs font-bold text-slate-600">事業所</span>
+              </p>
+              <p className="text-xs text-slate-600">
+                31〜60日: {freshnessMetrics.warningProvidersCount}件 ／ 61日以上(確認中):{' '}
+                {freshnessMetrics.pausedProvidersCount}件
+              </p>
+            </div>
+
+            <div className="bg-white border border-orange-300 rounded-2xl p-4 space-y-1">
+              <span className="text-xs font-bold text-orange-950 flex items-center gap-1.5">
+                <Flag className="w-4 h-4 text-orange-700" aria-hidden="true" />
+                「情報と違った」報告（3件以上）
+              </span>
+              <p className="text-2xl font-extrabold font-mono tabular-nums text-orange-900">
+                {
+                  freshnessMetrics.reportedProviders.filter(
+                    (r) => r.summary.isUnderReview
+                  ).length
+                }{' '}
+                <span className="text-xs font-bold text-slate-600">事業所</span>
+              </p>
+              <p className="text-xs text-slate-600">
+                累計報告件数：{providerReports.length}件（要確認対象を表示）
+              </p>
+            </div>
+
+            <div className="bg-white border border-slate-300 rounded-2xl p-4 space-y-1">
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <PauseCircle className="w-4 h-4 text-slate-600" aria-hidden="true" />
+                休止中の利用者数
+              </span>
+              <p className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
+                {freshnessMetrics.pausedUsersCount}{' '}
+                <span className="text-xs font-bold text-slate-600">
+                  名 / {freshnessMetrics.totalUsers}名
+                </span>
+              </p>
+              <p className="text-xs text-slate-600">
+                うち90日未確認の自動切替：{freshnessMetrics.autoPausedUsersCount}名
+              </p>
+            </div>
+          </div>
+
+          {/* 1. 未更新の事業所一覧（経過日数が長い順） */}
+          <section
+            data-testid="admin-stale-providers-list"
+            className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4"
+          >
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-700" aria-hidden="true" />
+                事業所ごとの更新状況（経過日数が長い順）
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                31日以上で注意バッジ、61日以上で自動的に「受付確認中」となり相談受付を停止します。
+              </p>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-700">
+                  <tr>
+                    <th className="py-2.5 px-3 font-bold">事業所名・地域</th>
+                    <th className="py-2.5 px-3 font-bold">最終更新日</th>
+                    <th className="py-2.5 px-3 font-bold">経過日数</th>
+                    <th className="py-2.5 px-3 font-bold">鮮度ステータス</th>
+                    <th className="py-2.5 px-3 font-bold">公開・受付状態</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {freshnessMetrics.providersByStaleness.map(
+                    ({ provider, freshness }) => (
+                      <tr
+                        key={provider.id}
+                        className={
+                          freshness.isAutoPaused ? 'bg-rose-50/40' : 'hover:bg-slate-50'
+                        }
+                      >
+                        <td className="py-2.5 px-3">
+                          <p className="font-bold text-slate-900">{provider.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {provider.locationCity} · 指定番号：{provider.designatedNumber}
+                          </p>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono tabular-nums text-slate-700">
+                          {provider.updatedAt}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold tabular-nums text-slate-900">
+                          {freshness.daysElapsed}日経過
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <ProviderFreshnessBadge info={freshness} />
+                        </td>
+                        <td className="py-2.5 px-3 text-xs font-bold">
+                          {freshness.isAutoPaused ? (
+                            <span className="text-rose-800">受付確認中（自動停止）</span>
+                          ) : freshness.tier === 'warning' ? (
+                            <span className="text-amber-800">要更新（順位低下中）</span>
+                          ) : (
+                            <span className="text-emerald-800">通常公開中</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* 2. 「情報と違った」報告を受けた事業所一覧 */}
+          <section
+            data-testid="admin-reported-providers-list"
+            className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4"
+          >
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Flag className="w-5 h-5 text-orange-700" aria-hidden="true" />
+                「情報と違った」報告を受けた事業所一覧
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                同一事業所に対する報告が3件以上になると、検索・詳細画面に「情報の確認中です」が表示されます。
+              </p>
+            </div>
+
+            {freshnessMetrics.reportedProviders.length === 0 ? (
+              <p className="text-sm text-slate-500 p-4 rounded-xl bg-slate-50 border border-slate-200">
+                現在、「情報と違った」の報告を受けている事業所はありません。
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {freshnessMetrics.reportedProviders.map(({ provider, summary }) => (
+                  <div
+                    key={provider.id}
+                    data-testid={`admin-reported-row-${provider.id}`}
+                    className={`p-4 rounded-xl border space-y-2 ${
+                      summary.isUnderReview
+                        ? 'bg-orange-50/70 border-orange-300'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-slate-900">{provider.name}</span>
+                        <span className="px-2 py-0.5 rounded bg-white border border-slate-300 text-xs font-mono font-bold text-slate-800 tabular-nums">
+                          報告 {summary.count}件
+                        </span>
+                        <ProviderReportWarningBadge summary={summary} />
+                      </div>
+                      <span className="text-xs text-slate-500">{provider.locationCity}</span>
+                    </div>
+                    <ul className="space-y-1 text-xs text-slate-700">
+                      {summary.reports.slice(0, 5).map((r) => (
+                        <li key={r.id}>
+                          ・{r.reason}（{r.createdAt.slice(0, 10)}）
+                          {r.note ? `：${r.note}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* 3. 休止中の利用者一覧・確認日状況 */}
+          <section
+            data-testid="admin-paused-users-list"
+            className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-4"
+          >
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-teal-800" aria-hidden="true" />
+                利用者の募集状況・希望確認状況（90日未確認で自動休止）
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600">
+                利用者が90日以上「変わっていません／変更します」の確認を行わない場合、自動的に「休止中」へ切り替わります。
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {userProfiles.map((user) => {
+                const freshness = getUserFreshnessInfo(user, effectiveReferenceDate);
+                return (
+                  <div
+                    key={user.id}
+                    className={`p-3.5 rounded-xl border flex flex-col gap-1.5 ${
+                      freshness.effectiveStatus === '休止中'
+                        ? 'bg-slate-100 border-slate-300'
+                        : 'bg-white border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-sm text-slate-900">
+                        {user.anonymousCode}（{user.city}）
+                      </span>
+                      <span className="text-xs font-mono text-slate-500 tabular-nums">
+                        確認から {freshness.daysElapsed}日
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <UserRecruitmentStatusBadge info={freshness} />
+                      <UserConfirmedDateBadge info={freshness} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         </div>

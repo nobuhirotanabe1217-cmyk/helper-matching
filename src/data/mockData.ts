@@ -3,12 +3,14 @@ import {
   AuditLogEntry,
   ChatMessage,
   ChatRequest,
+  ConfirmedInterviewRecord,
   CoordinatorProfile,
   DisclosureConsent,
   DisclosureHistoryEntry,
   MatchingInteraction,
   ProviderAvailability,
   ProviderCapabilities,
+  ProviderDiscrepancyReport,
   ProviderProfile,
   ProviderSubscription,
   SharedCaseToCoordinator,
@@ -17,7 +19,7 @@ import {
   UserProfile,
   UserSupportNeeds,
 } from '../types/domain';
-import { addDaysToIso, addMonthsToIso, getTodayIso } from '../utils/date';
+import { addDaysToIso, addMonthsToIso, formatJapaneseMonthOnly, getTodayIso } from '../utils/date';
 
 const TODAY = getTodayIso();
 const RECENT_DATE_2 = addDaysToIso(TODAY, -2);
@@ -103,6 +105,8 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     registrantRole: '家族',
     certificateStatus: '受給者証を持っている',
     registeredAt: '新着',
+    confirmedAt: RECENT_DATE_4,
+    recruitmentStatus: '募集中',
     isNewArrival: true,
     briefSummaryForFreePlan:
       '車いすでの土曜午後外出（移動支援）および女性ヘルパーによる排泄・入浴サポート希望',
@@ -126,6 +130,8 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     registrantRole: '本人',
     certificateStatus: '受給者証を持っている',
     registeredAt: '新着',
+    confirmedAt: RECENT_DATE_2,
+    recruitmentStatus: '募集中',
     isNewArrival: true,
     briefSummaryForFreePlan:
       '平日日中の身体介護・移乗介助および長時間見守り（重度訪問介護・居宅介護）希望',
@@ -149,6 +155,8 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     registrantRole: '家族',
     certificateStatus: '支給決定済みだが利用開始前',
     registeredAt: '今月登録',
+    confirmedAt: RECENT_DATE_8,
+    recruitmentStatus: '募集中',
     isNewArrival: false,
     briefSummaryForFreePlan:
       '土日午後の余暇外出（移動支援）。事前のスケジュール写真共有があると安心できます',
@@ -172,6 +180,8 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     registrantRole: '本人',
     certificateStatus: '受給者証を持っている',
     registeredAt: '今月登録',
+    confirmedAt: RECENT_DATE_4,
+    recruitmentStatus: '募集中',
     isNewArrival: false,
     briefSummaryForFreePlan:
       '火曜・木曜午前の通院・買い物同行援護（代読代筆含む）および自宅の調理援助を希望',
@@ -195,6 +205,8 @@ export const INITIAL_USER_PROFILES: UserProfile[] = [
     registrantRole: '支援者',
     certificateStatus: '現在申請中',
     registeredAt: '新着',
+    confirmedAt: RECENT_DATE_2,
+    recruitmentStatus: '募集中',
     isNewArrival: true,
     briefSummaryForFreePlan:
       '水曜・金曜午後の家事援助（調理・掃除・洗濯）および穏やかな声かけ配慮を希望',
@@ -424,6 +436,17 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
     branches: [
       { id: 'br-001', name: 'あおぞらケアセンター杉並（本店）', designatedNumber: '1311501234', city: '杉並区', addressNote: '阿佐谷南エリア', serviceTypes: ['移動支援', '居宅介護', '同行援護'], isMain: true },
     ],
+    updateHistory: [
+      {
+        id: 'uh-001',
+        providerId: 'prov-001',
+        updatedAt: RECENT_DATE_2,
+        timestamp: `${RECENT_DATE_2} 10:30`,
+        actorName: '山本 恵美',
+        kind: 'no_change',
+        summary: '受入条件・空き曜日の定期確認（変更なし）',
+      },
+    ],
   },
   {
     id: 'prov-002',
@@ -538,6 +561,17 @@ export const INITIAL_PROVIDER_PROFILES: ProviderProfile[] = [
     ],
     branches: [
       { id: 'br-006', name: 'くらしの輪 練馬', designatedNumber: '1312004455', city: '練馬区', addressNote: '練馬駅周辺', serviceTypes: ['居宅介護'], isMain: true },
+    ],
+    updateHistory: [
+      {
+        id: 'uh-005',
+        providerId: 'prov-005',
+        updatedAt: STALE_DATE_35,
+        timestamp: `${STALE_DATE_35} 09:00`,
+        actorName: '小林 真理',
+        kind: 'content_updated',
+        summary: '平日の家事援助受入条件を登録',
+      },
     ],
   },
 ];
@@ -1250,5 +1284,26 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     ipAddress: '192.168.1.12',
     detail: '面談日程決定に伴い特定事業所（prov-004）へ第3段階連絡先開示に利用者が同意',
     isSecurityAlert: false,
+  },
+];
+
+export const INITIAL_PROVIDER_REPORTS: ProviderDiscrepancyReport[] = [];
+
+export const INITIAL_CONFIRMED_INTERVIEWS: ConfirmedInterviewRecord[] = [
+  {
+    id: 'ci-001',
+    providerId: 'prov-004',
+    userId: 'user-004',
+    confirmedAt: RECENT_DATE_2,
+    confirmedMonthLabel: formatJapaneseMonthOnly(RECENT_DATE_2) || '今月',
+    kind: 'interview',
+  },
+  {
+    id: 'ci-002',
+    providerId: 'prov-001',
+    userId: 'user-001',
+    confirmedAt: RECENT_DATE_4,
+    confirmedMonthLabel: formatJapaneseMonthOnly(RECENT_DATE_4) || '今月',
+    kind: 'interview',
   },
 ];

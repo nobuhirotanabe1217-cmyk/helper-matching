@@ -10,8 +10,10 @@ import {
   CoordinatorProfile,
   SharedCaseToCoordinator,
   SubscriptionPlanDefinition,
+  ProviderDiscrepancyReport,
+  ConfirmedInterviewRecord,
 } from '../types/domain';
-import { getTodayIso } from './date';
+import { formatJapaneseMonthOnly, getTodayIso } from './date';
 import { DEFAULT_SUBSCRIPTION_PLANS } from './subscription';
 
 /**
@@ -23,6 +25,8 @@ export function migratePersistedState(rawSaved: Record<string, any>): Record<str
   const migratedUserProfiles: UserProfile[] = Array.isArray(rawSaved.userProfiles)
     ? rawSaved.userProfiles.map((u: any) => ({
         ...u,
+        confirmedAt: u.confirmedAt || today,
+        recruitmentStatus: u.recruitmentStatus || '募集中',
         familyShareToken: u.familyShareToken || `fam_${u.id || 'share'}`,
         sharedCoordinatorIds: Array.isArray(u.sharedCoordinatorIds)
           ? u.sharedCoordinatorIds
@@ -59,6 +63,7 @@ export function migratePersistedState(rawSaved: Record<string, any>): Record<str
         filterOnlyMatchingRequests: Boolean(p.filterOnlyMatchingRequests),
         staffMembers: Array.isArray(p.staffMembers) ? p.staffMembers : [],
         branches: Array.isArray(p.branches) ? p.branches : [],
+        updateHistory: Array.isArray(p.updateHistory) ? p.updateHistory : [],
       }))
     : [];
 
@@ -155,6 +160,39 @@ export function migratePersistedState(rawSaved: Record<string, any>): Record<str
     ? rawSaved.sharedCases
     : [];
 
+  const providerReports: ProviderDiscrepancyReport[] = Array.isArray(
+    rawSaved.providerReports
+  )
+    ? rawSaved.providerReports
+    : [];
+
+  const derivedInterviewsFromDisclosures: ConfirmedInterviewRecord[] =
+    migratedDisclosures
+      .filter((d) => Boolean(d.scheduleDecidedAt))
+      .map((d, idx) => {
+        const dateStr = (d.scheduleDecidedAt || today).slice(0, 10);
+        return {
+          id: `ci-mig-${idx}`,
+          providerId: d.providerId,
+          userId: d.userId,
+          confirmedAt: dateStr,
+          confirmedMonthLabel: formatJapaneseMonthOnly(dateStr) || '今月',
+          kind: 'interview',
+        };
+      });
+
+  const confirmedInterviews: ConfirmedInterviewRecord[] = Array.isArray(
+    rawSaved.confirmedInterviews
+  )
+    ? rawSaved.confirmedInterviews
+    : derivedInterviewsFromDisclosures;
+
+  const timeTravelDaysOffset =
+    typeof rawSaved.timeTravelDaysOffset === 'number' &&
+    Number.isFinite(rawSaved.timeTravelDaysOffset)
+      ? rawSaved.timeTravelDaysOffset
+      : 0;
+
   return {
     ...rawSaved,
     userProfiles: migratedUserProfiles,
@@ -168,5 +206,8 @@ export function migratePersistedState(rawSaved: Record<string, any>): Record<str
     disclosureHistory,
     coordinators,
     sharedCases,
+    providerReports,
+    confirmedInterviews,
+    timeTravelDaysOffset,
   };
 }

@@ -11,6 +11,7 @@ import {
   PROVIDER_CARE_LABELS,
 } from '../types/domain';
 import { daysSinceIsoDate, isProviderStale } from './date';
+import { getProviderFreshnessInfo } from './freshness';
 
 export interface FullUserBundle {
   profile: UserProfile;
@@ -48,6 +49,7 @@ export function calculateMatchResult(
     provider.profile.updatedAt || provider.availability.updatedAt;
   const daysSinceUpdate = daysSinceIsoDate(latestUpdatedAt, referenceDate);
   const stale = isProviderStale(latestUpdatedAt, referenceDate);
+  const freshness = getProviderFreshnessInfo(latestUpdatedAt, referenceDate);
 
   // 1. 対応サービスとの一致 (25点)
   const desiredServices = user.needs.desiredServices;
@@ -507,28 +509,74 @@ export function calculateMatchResult(
     summaryText,
     isStaleProvider: stale,
     daysSinceUpdate,
+    freshnessTier: freshness.tier,
   };
+}
+
+export type ProviderSearchSortMode = 'default' | 'newest_update';
+
+function getTierRank(match: MatchResult): number {
+  if (match.freshnessTier === 'paused') return 2;
+  if (match.freshnessTier === 'warning' || match.isStaleProvider) return 1;
+  return 0;
 }
 
 /**
  * 利用者検索画面向けの並び順比較関数
- * - 更新から30日以上経過した事業所は一覧の表示順を下げる（有料プラン有無では順位・相性を変えない）
- * - そのうえで相性スコア降順（お気に入り優先フィルタ時を除く）
+ * - 標準（default）：休止中（61日以上未更新）および未更新警戒（31〜60日）を下げ、
+ *   新鮮で適合度が高い事業所が上に来るように並べる（有料プラン有無では順位・相性を変えない）
+ * - 更新が新しい順（newest_update）：経過日数が少ない順に並べる
  */
 export function compareProvidersForUserSearch(
   a: { match: MatchResult; isFavorite?: boolean },
   b: { match: MatchResult; isFavorite?: boolean },
-  prioritizeFavorites: boolean = false
+  optionsOrPrioritizeFavorites:
+    | boolean
+    | { prioritizeFavorites?: boolean; sortBy?: ProviderSearchSortMode } = false
 ): number {
-  const aStale = Boolean(a.match.isStaleProvider);
-  const bStale = Boolean(b.match.isStaleProvider);
-  if (aStale !== bStale) {
-    return aStale ? 1 : -1;
+  const options =
+    typeof optionsOrPrioritizeFavorites === 'boolean'
+      ? {
+          prioritizeFavorites: optionsOrPrioritizeFavorites,
+          sortBy: 'default' as ProviderSearchSortMode,
+        }
+      : {
+          prioritizeFavorites: Boolean(optionsOrPrioritizeFavorites.prioritizeFavorites),
+          sortBy: optionsOrPrioritizeFavorites.sortBy || 'default',
+        };
+
+  if (options.sortBy === 'newest_update') {
+    const aDays = a.match.daysSinceUpdate ?? 999;
+    const bDays = b.match.daysSinceUpdate ?? 999;
+    if (aDays !== bDays) {
+      return aDays - bDays;
+    }
+    if (
+      options.prioritizeFavorites &&
+      Boolean(a.isFavorite) !== Boolean(b.isFavorite)
+    ) {
+      return a.isFavorite ? -1 : 1;
+    }
+    return b.match.breakdown.totalScore - a.match.breakdown.totalScore;
   }
 
-  if (prioritizeFavorites && Boolean(a.isFavorite) !== Boolean(b.isFavorite)) {
+  const aTier = getTierRank(a.match);
+  const bTier = getTierRank(b.match);
+  if (aTier !== bTier) {
+    return aTier - bTier;
+  }
+
+  if (
+    options.prioritizeFavorites &&
+    Boolean(a.isFavorite) !== Boolean(b.isFavorite)
+  ) {
     return a.isFavorite ? -1 : 1;
   }
 
-  return b.match.breakdown.totalScore - a.match.breakdown.totalScore;
+  const scoreDiff = b.match.breakdown.totalScore - a.match.breakdown.totalScore;
+  if (scoreDiff !== 0) {
+    return scoreDiff;
+  }
+
+  return (a.match.daysSinceUpdate ?? 999) - (b.match.daysSinceUpdate ?? 999);
 }

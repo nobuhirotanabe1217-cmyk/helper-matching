@@ -19,6 +19,8 @@ import {
   AlertTriangle,
   Sparkles,
   CheckCircle2,
+  PauseCircle,
+  ArrowUpDown,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -35,8 +37,14 @@ import {
 import {
   calculateMatchResult,
   compareProvidersForUserSearch,
+  ProviderSearchSortMode,
 } from '../utils/matching';
 import { formatJapaneseDate } from '../utils/date';
+import {
+  getProviderDiscrepancySummary,
+  getProviderFreshnessInfo,
+  getProviderInterviewTrustBadge,
+} from '../utils/freshness';
 import { isPaidPlanActive } from '../utils/subscription';
 import { countUserFavorites } from '../utils/favorites';
 import { HelpTooltip } from './HelpTooltip';
@@ -52,6 +60,11 @@ import {
   ServiceIllustration,
   WeeklyDayStrip,
 } from './VisualHelpers';
+import {
+  ProviderFreshnessBadge,
+  ProviderInterviewTrustBadge,
+  ProviderReportWarningBadge,
+} from './FreshnessBadges';
 
 interface UserSearchProvidersProps {
   favoritesOnly?: boolean;
@@ -78,6 +91,10 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
     getProviderSubscription,
     subscriptionPlans,
     interactions,
+    disclosures,
+    providerReports,
+    confirmedInterviews,
+    effectiveReferenceDate,
     toggleUserFavoriteProvider,
     updateUserFavoriteNote,
     openProviderDetail,
@@ -94,6 +111,7 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
   const [filterGender, setFilterGender] = useState<'all' | '女性' | '男性'>('all');
   const [filterCareItem, setFilterCareItem] = useState<CareNeedItem | 'all'>('all');
   const [onlyConsultable, setOnlyConsultable] = useState<boolean>(true);
+  const [sortMode, setSortMode] = useState<ProviderSearchSortMode>('default');
   const [showFilterPanel, setShowFilterPanel] = useState<boolean>(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savedNoteIds, setSavedNoteIds] = useState<Record<string, boolean>>({});
@@ -108,6 +126,7 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
     setFilterGender('all');
     setFilterCareItem('all');
     setOnlyConsultable(true);
+    setSortMode('default');
   };
 
   const handleSaveNote = (providerId: string, currentSavedNote: string) => {
@@ -123,7 +142,22 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
     .map((p) => {
       const bundle = getProviderBundleById(p.id);
       if (!bundle) return null;
-      const match = calculateMatchResult(currentUserBundle, bundle);
+      const match = calculateMatchResult(
+        currentUserBundle,
+        bundle,
+        effectiveReferenceDate
+      );
+      const updatedAt = bundle.profile.updatedAt || bundle.availability.updatedAt;
+      const freshness = getProviderFreshnessInfo(
+        updatedAt,
+        effectiveReferenceDate
+      );
+      const discrepancy = getProviderDiscrepancySummary(p.id, providerReports);
+      const interviewTrust = getProviderInterviewTrustBadge(
+        p.id,
+        confirmedInterviews,
+        disclosures
+      );
       const interaction = interactions.find(
         (i) => i.userId === activeUserId && i.providerId === p.id
       );
@@ -132,6 +166,9 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
       return {
         bundle,
         match,
+        freshness,
+        discrepancy,
+        interviewTrust,
         isPaid,
         isFavorite: Boolean(interaction?.isUserFavorite),
         favoriteNote: interaction?.userFavoriteNote || '',
@@ -196,7 +233,9 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
       }
       return true;
     })
-    .sort((a, b) => compareProvidersForUserSearch(a, b, false));
+    .sort((a, b) =>
+      compareProvidersForUserSearch(a, b, { sortBy: sortMode })
+    );
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 pb-24 space-y-5">
@@ -325,20 +364,41 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
           </div>
         </div>
 
-        {/* 絞り込み検索パネル */}
+        {/* 絞り込み検索＆並び替えパネル */}
         {!favoritesOnly && (
           <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setShowFilterPanel(!showFilterPanel)}
-              aria-expanded={showFilterPanel}
-              className="min-h-[42px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer"
-            >
-              <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
-              <span>
-                条件で絞り込む{showFilterPanel ? '（閉じる）' : '（開く）'}
-              </span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowFilterPanel(!showFilterPanel)}
+                aria-expanded={showFilterPanel}
+                className="min-h-[42px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer"
+              >
+                <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+                <span>
+                  条件で絞り込む{showFilterPanel ? '（閉じる）' : '（開く）'}
+                </span>
+              </button>
+
+              <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 min-h-[42px]">
+                <ArrowUpDown className="w-3.5 h-3.5 text-teal-800 shrink-0" aria-hidden="true" />
+                <label htmlFor="provider-sort-select" className="text-xs font-bold text-slate-600 whitespace-nowrap">
+                  並び替え:
+                </label>
+                <select
+                  id="provider-sort-select"
+                  data-testid="provider-sort-select"
+                  value={sortMode}
+                  onChange={(e) =>
+                    setSortMode(e.target.value as ProviderSearchSortMode)
+                  }
+                  className="bg-transparent text-xs sm:text-sm font-bold text-slate-900 focus:outline-none py-1 cursor-pointer"
+                >
+                  <option value="default">標準（適合度と更新の新しい順）</option>
+                  <option value="newest_update">更新が新しい順</option>
+                </select>
+              </div>
+            </div>
 
             <button
               type="button"
@@ -569,6 +629,9 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
             ({
               bundle,
               match,
+              freshness,
+              discrepancy,
+              interviewTrust,
               isPaid,
               isFavorite,
               favoriteNote,
@@ -576,6 +639,7 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
             }) => {
               const { profile, capabilities, availability } = bundle;
               const updatedAt = profile.updatedAt || availability.updatedAt;
+              const isPaused = freshness.isAutoPaused;
               const hasDesignatedNumber = /^\d{10}$/.test(
                 (profile.designatedNumber || '').replace(/[-\s]/g, '')
               );
@@ -592,13 +656,29 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                 <article
                   key={profile.id}
                   data-testid={`provider-card-${profile.id}`}
-                  className={`bg-white rounded-2xl p-5 sm:p-6 space-y-4 shadow-2xs border ${
-                    isPaid
-                      ? 'border-indigo-300 ring-1 ring-indigo-100'
-                      : 'border-slate-200'
+                  data-paused={isPaused ? 'true' : 'false'}
+                  className={`rounded-2xl p-5 sm:p-6 space-y-4 shadow-2xs border transition-opacity ${
+                    isPaused
+                      ? 'bg-slate-100/80 border-slate-300 opacity-75'
+                      : isPaid
+                      ? 'bg-white border-indigo-300 ring-1 ring-indigo-100'
+                      : 'bg-white border-slate-200'
                   }`}
                 >
-                  {/* 上段：指定番号・最終更新日・サービスアイコン＋事業所名＋適合度リング */}
+                  {/* 受付確認中（61日以上未更新）バナー */}
+                  {isPaused && freshness.pauseNoticeText && (
+                    <div
+                      data-testid={`provider-paused-banner-${profile.id}`}
+                      className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-extrabold flex items-center gap-2"
+                    >
+                      <PauseCircle className="w-4 h-4 text-rose-700 shrink-0" aria-hidden="true" />
+                      <span>
+                        受付確認中：{freshness.pauseNoticeText}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 上段：指定番号・鮮度バッジ・実績・通報警告＋事業所名＋適合度リング */}
                   <div className="flex items-start justify-between gap-2.5 sm:gap-4 border-b border-slate-100 pb-4">
                     <div className="flex items-start gap-2.5 sm:gap-3.5 min-w-0 flex-1">
                       <ServiceIllustration
@@ -607,6 +687,9 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                       />
                       <div className="space-y-1.5 min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs">
+                          <ProviderFreshnessBadge info={freshness} compact />
+                          <ProviderReportWarningBadge summary={discrepancy} />
+                          <ProviderInterviewTrustBadge info={interviewTrust} />
                           {hasDesignatedNumber && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 font-bold text-teal-950 tabular-nums">
                               <BadgeCheck className="w-3.5 h-3.5 text-teal-700 shrink-0" aria-hidden="true" />
@@ -617,15 +700,6 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                             <Clock className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
                             <span>最終更新日：{formatJapaneseDate(updatedAt)}</span>
                           </span>
-                          {match.isStaleProvider && (
-                            <span
-                              data-testid={`stale-warning-${profile.id}`}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-950 font-bold tabular-nums"
-                            >
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
-                              <span>情報が古い可能性があります（{match.daysSinceUpdate}日経過）</span>
-                            </span>
-                          )}
                           {isPaid && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-950 font-bold">
                               <Sparkles className="w-3 h-3 text-indigo-700 shrink-0" aria-hidden="true" />
@@ -821,11 +895,17 @@ export const UserSearchProviders: React.FC<UserSearchProvidersProps> = ({
                     <div className="flex items-center gap-2 flex-1 sm:flex-initial justify-end">
                       <button
                         type="button"
+                        data-testid={`provider-chat-btn-${profile.id}`}
+                        disabled={isPaused}
                         onClick={() => openChatWith(profile.id)}
-                        className="min-h-[44px] px-4 py-2 rounded-xl border border-teal-700 text-teal-900 bg-white hover:bg-teal-50 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                        className={`min-h-[44px] px-4 py-2 rounded-xl border text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap ${
+                          isPaused
+                            ? 'bg-slate-200 border-slate-300 text-slate-500 cursor-not-allowed'
+                            : 'border-teal-700 text-teal-900 bg-white hover:bg-teal-50 cursor-pointer'
+                        }`}
                       >
                         <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                        <span>チャット相談</span>
+                        <span>{isPaused ? '受付確認中' : 'チャット相談'}</span>
                       </button>
 
                       <button

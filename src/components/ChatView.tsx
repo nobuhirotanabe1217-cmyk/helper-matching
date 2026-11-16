@@ -11,6 +11,7 @@ import {
   Building2,
   AlertCircle,
   X,
+  Flag,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -19,12 +20,18 @@ import {
   ChatMessageKind,
   DAYS_OF_WEEK,
   DayOfWeek,
+  DISCREPANCY_REPORT_REASONS,
+  DiscrepancyReportReason,
   ScheduleCandidateSlot,
   TIME_SLOTS,
   TimeSlot,
   UserPII,
 } from '../types/domain';
 import { getCurrentYearMonth } from '../utils/date';
+import {
+  getProviderDiscrepancySummary,
+  getProviderFreshnessInfo,
+} from '../utils/freshness';
 import { verifyProviderChatAccess } from '../utils/subscription';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
@@ -32,6 +39,10 @@ import {
   buildChatSpeechText,
   buildSingleChatMessageSpeechText,
 } from '../utils/speech';
+import {
+  ProviderFreshnessBadge,
+  ProviderReportWarningBadge,
+} from './FreshnessBadges';
 
 export const ChatView: React.FC = () => {
   const {
@@ -62,6 +73,9 @@ export const ChatView: React.FC = () => {
     getUserBundleById,
     navigateTo,
     currentUserBundle,
+    effectiveReferenceDate,
+    providerReports,
+    submitProviderReport,
   } = useAppState();
 
   const isUserMode = role !== 'provider';
@@ -70,7 +84,7 @@ export const ChatView: React.FC = () => {
     subscription: currentProviderSubscription,
     plans: subscriptionPlans,
     allProviderChatRequests: chatRequests,
-    currentYearMonth: getCurrentYearMonth(),
+    currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
   });
 
   // パートナー一覧の構築（無料プランの事業所も利用者からの返信＆月1件の申請枠内なら利用可能）
@@ -158,7 +172,7 @@ export const ChatView: React.FC = () => {
         plans: subscriptionPlans,
         chatRequest: currentChatReq,
         allProviderChatRequests: chatRequests,
-        currentYearMonth: getCurrentYearMonth(),
+        currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
       })
     : null;
 
@@ -169,6 +183,12 @@ export const ChatView: React.FC = () => {
   const [stageNotice, setStageNotice] = useState<string>('');
   const [stageError, setStageError] = useState<string>('');
   const [revealedPii, setRevealedPii] = useState<UserPII | null>(null);
+
+  const [showReportPanel, setShowReportPanel] = useState<boolean>(false);
+  const [reportReason, setReportReason] = useState<DiscrepancyReportReason>(
+    DISCREPANCY_REPORT_REASONS[0]
+  );
+  const [reportNote, setReportNote] = useState<string>('');
 
   // 型のある構造化アクション（「面談を申し込む」「日程の候補を送る」「見学を申し込む」）
   const [scheduleComposerKind, setScheduleComposerKind] = useState<
@@ -195,6 +215,7 @@ export const ChatView: React.FC = () => {
     setStageError('');
     setStageNotice('');
     setDisclosurePanelMode('none');
+    setShowReportPanel(false);
   }, [currentUserId, currentProviderId, isUserMode]);
 
   const threadMessages = messages.filter(
@@ -229,6 +250,36 @@ export const ChatView: React.FC = () => {
   const targetUserBundle = currentUserId
     ? getUserBundleById(currentUserId)
     : undefined;
+  const targetProviderProfile = currentProviderId
+    ? providerProfiles.find((p) => p.id === currentProviderId)
+    : undefined;
+  const targetProviderFreshness = targetProviderProfile
+    ? getProviderFreshnessInfo(
+        targetProviderProfile.updatedAt,
+        effectiveReferenceDate
+      )
+    : null;
+  const targetProviderDiscrepancy = currentProviderId
+    ? getProviderDiscrepancySummary(currentProviderId, providerReports)
+    : null;
+
+  const handleSubmitDiscrepancyReport = () => {
+    if (!currentProviderId || !currentUserId) return;
+    const { reportCount } = submitProviderReport({
+      providerId: currentProviderId,
+      userId: currentUserId,
+      reason: reportReason,
+      note: reportNote.trim() || undefined,
+    });
+    setShowReportPanel(false);
+    setReportNote('');
+    setStageError('');
+    setStageNotice(
+      reportCount >= 3
+        ? `「情報と違った」を報告しました（累計 ${reportCount}件）。複数件の報告が集まったため、この事業所には「情報の確認中です」表示が出ます。`
+        : `「情報と違った（${reportReason}）」を運営へ報告しました（現在 ${reportCount}件）。情報の正確性向上にご協力ありがとうございます。`
+    );
+  };
 
   useEffect(() => {
     if (!isUserMode && disclosure.stage === 3 && disclosure.disclosedFields.piiContactAccess && currentUserId) {
@@ -538,10 +589,18 @@ export const ChatView: React.FC = () => {
         <section className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl flex flex-col overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/70 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg sm:text-xl font-bold text-slate-900">
-                  {partnerObj?.title}
-                </h2>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+                    {partnerObj?.title}
+                  </h2>
+                  {isUserMode && targetProviderFreshness && (
+                    <ProviderFreshnessBadge info={targetProviderFreshness} />
+                  )}
+                  {isUserMode && targetProviderDiscrepancy && (
+                    <ProviderReportWarningBadge summary={targetProviderDiscrepancy} />
+                  )}
+                </div>
                 <p className="text-xs sm:text-sm text-slate-600">
                   {partnerObj?.subtitle} · 現在：
                   <strong className="text-teal-900">
@@ -611,9 +670,101 @@ export const ChatView: React.FC = () => {
                       匿名相談に戻す
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    data-testid="report-discrepancy-btn"
+                    onClick={() => setShowReportPanel((prev) => !prev)}
+                    className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                      showReportPanel
+                        ? 'bg-amber-700 border-amber-700 text-white'
+                        : 'bg-white border-amber-300 text-amber-950 hover:bg-amber-50'
+                    }`}
+                  >
+                    <Flag className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>情報と違った</span>
+                  </button>
                 </div>
               )}
             </div>
+
+            {isUserMode && showReportPanel && (
+              <div
+                data-testid="report-discrepancy-modal"
+                className="p-4 rounded-xl bg-amber-50/90 border-2 border-amber-500 space-y-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-extrabold text-amber-950">
+                      掲載情報との相違を報告（{partnerObj?.title}）
+                    </p>
+                    <p className="text-xs text-amber-900">
+                      当てはまる理由をお選びください。3件以上の報告が集まると、利用者画面に「情報の確認中です」と表示されます。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowReportPanel(false)}
+                    aria-label="報告パネルを閉じる"
+                    className="p-1 rounded hover:bg-amber-200/70 text-amber-900 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {DISCREPANCY_REPORT_REASONS.map((reason) => {
+                    const selected = reportReason === reason;
+                    return (
+                      <label
+                        key={reason}
+                        className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold cursor-pointer ${
+                          selected
+                            ? 'bg-white border-amber-700 text-amber-950 shadow-2xs'
+                            : 'bg-white/70 border-amber-200 text-slate-700 hover:bg-white'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="discrepancy-reason"
+                          value={reason}
+                          checked={selected}
+                          onChange={() => setReportReason(reason)}
+                          className="accent-amber-700"
+                        />
+                        <span>{reason}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <input
+                  type="text"
+                  value={reportNote}
+                  onChange={(e) => setReportNote(e.target.value)}
+                  placeholder="詳しい状況メモ（任意：例『土曜の午後も空きなしと言われた』）"
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-amber-300 bg-white text-xs text-slate-900"
+                />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="submit-discrepancy-report-btn"
+                    onClick={handleSubmitDiscrepancyReport}
+                    className="min-h-[42px] px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold cursor-pointer"
+                  >
+                    この内容で報告する
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowReportPanel(false)}
+                    className="min-h-[42px] px-3.5 py-2 rounded-xl border border-amber-300 bg-white text-amber-950 text-xs font-bold cursor-pointer"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            )}
 
             {stageNotice && (
               <div

@@ -22,7 +22,8 @@ import { RegistrationCompleteView } from './components/RegistrationCompleteView'
 import { LoginView } from './components/LoginView';
 import { CoordinatorView } from './components/CoordinatorView';
 import { FreePlanChatUpgradeModal } from './components/VisualHelpers';
-import { CheckCircle2, X } from 'lucide-react';
+import { CalendarClock, CheckCircle2, RotateCcw, X } from 'lucide-react';
+import { formatJapaneseDate, getTodayIso } from './utils/date';
 
 const MainRouter: React.FC = () => {
   const {
@@ -33,6 +34,9 @@ const MainRouter: React.FC = () => {
     subscriptionPlans,
     registrationBanner,
     setRegistrationBanner,
+    timeTravelDaysOffset,
+    effectiveReferenceDate,
+    resetTimeToToday,
   } = useAppState();
 
   const { liveAnnouncement } = useSpeech();
@@ -59,6 +63,33 @@ const MainRouter: React.FC = () => {
       </div>
 
       <Header />
+
+      {timeTravelDaysOffset > 0 && (
+        <div
+          role="status"
+          data-testid="simulated-date-banner"
+          className="bg-indigo-900 text-white border-b border-indigo-700 px-4 py-2"
+        >
+          <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs font-extrabold">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="w-4 h-4 text-indigo-300 shrink-0" />
+              <span>
+                運営テスト（時間経過シミュレーション中）：表示基準日{' '}
+                {formatJapaneseDate(getTodayIso(effectiveReferenceDate))}（+
+                {timeTravelDaysOffset}日経過）
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={resetTimeToToday}
+              className="px-2.5 py-1 rounded-lg bg-indigo-800 hover:bg-indigo-700 text-indigo-100 text-xs inline-flex items-center gap-1 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              今日に戻す
+            </button>
+          </div>
+        </div>
+      )}
 
       {registrationBanner && (
         <div

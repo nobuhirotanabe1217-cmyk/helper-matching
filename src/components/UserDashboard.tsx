@@ -17,6 +17,9 @@ import {
   UsersRound,
   AlertTriangle,
   Clock,
+  CheckCircle2,
+  PauseCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import {
@@ -24,6 +27,12 @@ import {
   compareProvidersForUserSearch,
 } from '../utils/matching';
 import { formatJapaneseDate } from '../utils/date';
+import {
+  getProviderDiscrepancySummary,
+  getProviderFreshnessInfo,
+  getProviderInterviewTrustBadge,
+  getUserFreshnessInfo,
+} from '../utils/freshness';
 import {
   getFavoriteInteractionsForUser,
   isProviderFavorited,
@@ -37,6 +46,13 @@ import {
   UserMatchingProgressBoard,
   WeeklyDayStrip,
 } from './VisualHelpers';
+import {
+  ProviderFreshnessBadge,
+  ProviderInterviewTrustBadge,
+  ProviderReportWarningBadge,
+  UserConfirmedDateBadge,
+  UserRecruitmentStatusBadge,
+} from './FreshnessBadges';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
 import {
@@ -57,6 +73,11 @@ export const UserDashboard: React.FC = () => {
     chatRequests,
     coordinators,
     sharedCases,
+    providerReports,
+    confirmedInterviews,
+    effectiveReferenceDate,
+    confirmUserNeedsUnchanged,
+    setUserRecruitmentStatus,
     respondToChatRequest,
     toggleUserFavoriteProvider,
     shareUserWithCoordinator,
@@ -76,6 +97,7 @@ export const UserDashboard: React.FC = () => {
   );
   const [coordNote, setCoordNote] = useState('');
   const [coordSharedMsg, setCoordSharedMsg] = useState('');
+  const [confirmFeedback, setConfirmFeedback] = useState('');
 
   // 万一まだ利用者が0名の場合は新規登録へ案内
   if (userProfiles.length === 0) {
@@ -108,13 +130,36 @@ export const UserDashboard: React.FC = () => {
   }
 
   const { profile, needs, preferences } = currentUserBundle;
+  const userFreshness = getUserFreshnessInfo(profile, effectiveReferenceDate);
 
   const matchedProviders = providerProfiles
     .map((p) => {
       const pBundle = getProviderBundleById(p.id);
       if (!pBundle) return null;
-      const result = calculateMatchResult(currentUserBundle, pBundle);
-      return { provider: pBundle, result, match: result };
+      const result = calculateMatchResult(
+        currentUserBundle,
+        pBundle,
+        effectiveReferenceDate
+      );
+      const updatedAt = pBundle.profile.updatedAt || pBundle.availability.updatedAt;
+      const freshness = getProviderFreshnessInfo(
+        updatedAt,
+        effectiveReferenceDate
+      );
+      const discrepancy = getProviderDiscrepancySummary(p.id, providerReports);
+      const interviewTrust = getProviderInterviewTrustBadge(
+        p.id,
+        confirmedInterviews,
+        disclosures
+      );
+      return {
+        provider: pBundle,
+        result,
+        match: result,
+        freshness,
+        discrepancy,
+        interviewTrust,
+      };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
     .sort((a, b) => compareProvidersForUserSearch(a, b, false));
@@ -232,10 +277,14 @@ export const UserDashboard: React.FC = () => {
       <section className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
         <div className="flex flex-col gap-3.5 border-b border-slate-100 pb-4">
           <div className="min-w-0">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-teal-900 text-white text-xs font-bold">
-              <User className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>利用者マイページ（完全無料）</span>
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-teal-900 text-white text-xs font-bold">
+                <User className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>利用者マイページ（完全無料）</span>
+              </span>
+              <UserRecruitmentStatusBadge info={userFreshness} />
+              <UserConfirmedDateBadge info={userFreshness} />
+            </div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-1.5">
               {profile.nickname} さん
             </h1>
@@ -327,6 +376,107 @@ export const UserDashboard: React.FC = () => {
           activeProviders={activeProviderProgressItems}
           onOpenFavorites={() => navigateTo('user-favorites')}
         />
+      </section>
+
+      {/* 1.25 希望条件の確認エリア（鮮度管理＆募集中／休止中切替） */}
+      <section
+        data-testid="user-freshness-confirm-card"
+        className={`rounded-2xl p-5 border-2 space-y-3 shadow-2xs ${
+          userFreshness.effectiveStatus === '休止中'
+            ? 'bg-amber-50/80 border-amber-300'
+            : 'bg-teal-50/50 border-teal-200'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-extrabold text-slate-900">
+                希望は変わっていませんか？
+              </h2>
+              <UserRecruitmentStatusBadge info={userFreshness} />
+            </div>
+            <p className="text-xs text-slate-700">
+              {userFreshness.isAutoPaused
+                ? `前回の確認から ${userFreshness.daysElapsed}日（90日以上）経過したため、自動で「休止中」になっています。「変わっていません」を押すと「募集中」に戻ります。`
+                : `最終確認日：${formatJapaneseDate(
+                    userFreshness.confirmedAt || profile.registeredAt
+                  )}（${userFreshness.daysElapsed}日経過）。90日以上確認がない場合は自動で「休止中」になります。`}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="user-confirm-unchanged-btn"
+              onClick={() => {
+                const res = confirmUserNeedsUnchanged(activeUserId);
+                setConfirmFeedback(
+                  `希望条件を最新日（${formatJapaneseDate(
+                    res.confirmedAt
+                  )}）で確認済みに更新し、「募集中」にしました。`
+                );
+              }}
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs sm:text-sm font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <RefreshCw className="w-4 h-4" aria-hidden="true" />
+              <span>変わっていません</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="user-confirm-change-btn"
+              onClick={() => {
+                setUserWizardStep(1);
+                navigateTo('user-wizard');
+              }}
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileEdit className="w-4 h-4 text-teal-800" aria-hidden="true" />
+              <span>変更します</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="user-recruitment-toggle-btn"
+              onClick={() => {
+                const nextStatus =
+                  userFreshness.effectiveStatus === '募集中'
+                    ? '休止中'
+                    : '募集中';
+                setUserRecruitmentStatus(activeUserId, nextStatus);
+                setConfirmFeedback(
+                  nextStatus === '休止中'
+                    ? '募集状態を「休止中」に切り替えました。いつでも「募集中」に戻せます。'
+                    : '募集状態を「募集中」に再開しました。'
+                );
+              }}
+              className="min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              {userFreshness.effectiveStatus === '募集中' ? (
+                <>
+                  <PauseCircle className="w-4 h-4 text-slate-500" aria-hidden="true" />
+                  <span>一時休止する</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700" aria-hidden="true" />
+                  <span>募集中に戻す</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {confirmFeedback && (
+          <div
+            role="status"
+            data-testid="user-confirm-feedback"
+            className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs font-bold flex items-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>{confirmFeedback}</span>
+          </div>
+        )}
       </section>
 
       {/* 1.5 自分の特性プロフィール＆家族・相談支援専門員への共有 */}
@@ -781,137 +931,152 @@ export const UserDashboard: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {matchedProviders.map(({ provider, result }) => {
-              const isFav = isProviderFavorited(
-                interactions,
-                activeUserId,
-                provider.profile.id
-              );
-              const updatedAt =
-                provider.profile.updatedAt || provider.availability.updatedAt;
+            {matchedProviders.map(
+              ({ provider, result, freshness, discrepancy, interviewTrust }) => {
+                const isFav = isProviderFavorited(
+                  interactions,
+                  activeUserId,
+                  provider.profile.id
+                );
+                const updatedAt =
+                  provider.profile.updatedAt || provider.availability.updatedAt;
+                const isPaused = freshness.isAutoPaused;
 
-              return (
-                <div
-                  key={provider.profile.id}
-                  className="border border-slate-200 rounded-2xl p-4 flex flex-col justify-between gap-3 bg-slate-50/50"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <span className="text-[11px] font-semibold text-teal-800 block">
-                          {provider.profile.locationCity} ·{' '}
-                          {provider.profile.serviceTypes.join('/')}
-                        </span>
-                        <h3 className="text-base font-bold text-slate-900 truncate mt-0.5">
-                          {provider.profile.name}
-                        </h3>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] text-slate-600">
-                          <span className="inline-flex items-center gap-1 tabular-nums">
-                            <Clock className="w-3 h-3 text-slate-400" aria-hidden="true" />
-                            最終更新：{formatJapaneseDate(updatedAt)}
-                          </span>
-                          {result.isStaleProvider && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-950 font-bold">
-                              <AlertTriangle className="w-3 h-3 text-amber-700" aria-hidden="true" />
-                              情報が古い可能性
-                            </span>
-                          )}
+                return (
+                  <div
+                    key={provider.profile.id}
+                    className={`border rounded-2xl p-4 flex flex-col justify-between gap-3 ${
+                      isPaused
+                        ? 'border-slate-300 bg-slate-100/80 opacity-75'
+                        : 'border-slate-200 bg-slate-50/50'
+                    }`}
+                  >
+                    <div className="space-y-2.5">
+                      {isPaused && freshness.pauseNoticeText && (
+                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-extrabold flex items-center gap-1.5">
+                          <PauseCircle className="w-4 h-4 text-rose-700 shrink-0" aria-hidden="true" />
+                          <span>{freshness.pauseNoticeText}</span>
                         </div>
+                      )}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-[11px] font-semibold text-teal-800 block">
+                            {provider.profile.locationCity} ·{' '}
+                            {provider.profile.serviceTypes.join('/')}
+                          </span>
+                          <h3 className="text-base font-bold text-slate-900 truncate mt-0.5">
+                            {provider.profile.name}
+                          </h3>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] text-slate-600">
+                            <ProviderFreshnessBadge info={freshness} compact />
+                            <ProviderReportWarningBadge summary={discrepancy} />
+                            <ProviderInterviewTrustBadge info={interviewTrust} />
+                            <span className="inline-flex items-center gap-1 tabular-nums">
+                              <Clock className="w-3 h-3 text-slate-400" aria-hidden="true" />
+                              最終更新：{formatJapaneseDate(updatedAt)}
+                            </span>
+                          </div>
+                        </div>
+                        <MatchScoreRing
+                          score={result.breakdown.totalScore}
+                          judgment={result.judgment}
+                          size="sm"
+                        />
                       </div>
-                      <MatchScoreRing
-                        score={result.breakdown.totalScore}
-                        judgment={result.judgment}
-                        size="sm"
+
+                      {provider.profile.appealMessage && (
+                        <p className="text-xs text-teal-950 bg-teal-50/70 border border-teal-200 rounded-lg px-2.5 py-1.5 font-medium">
+                          「{provider.profile.appealMessage}」
+                        </p>
+                      )}
+
+                      <CareNeedsIconGrid
+                        items={needs.careNeeds}
+                        supportedItems={provider.capabilities.supportedCareItems}
+                        maxShow={4}
+                      />
+
+                      <MatchBreakdownBarGraph
+                        breakdown={result.breakdown}
+                        compact={true}
                       />
                     </div>
 
-                    {provider.profile.appealMessage && (
-                      <p className="text-xs text-teal-950 bg-teal-50/70 border border-teal-200 rounded-lg px-2.5 py-1.5 font-medium">
-                        「{provider.profile.appealMessage}」
-                      </p>
-                    )}
-
-                    <CareNeedsIconGrid
-                      items={needs.careNeeds}
-                      supportedItems={provider.capabilities.supportedCareItems}
-                      maxShow={4}
-                    />
-
-                    <MatchBreakdownBarGraph
-                      breakdown={result.breakdown}
-                      compact={true}
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <SpeechButton
-                      compact
-                      speechId={`dash-card-${provider.profile.id}`}
-                      label="読み上げ"
-                      getText={() =>
-                        buildProviderCardSpeechText({
-                          name: provider.profile.name,
-                          score: result.breakdown.totalScore,
-                          judgment: result.judgment,
-                          locationCity: provider.profile.locationCity,
-                          coverageAreas: provider.profile.coverageAreas,
-                          services: provider.profile.serviceTypes,
-                          acceptanceStatus: provider.availability.acceptanceStatus,
-                          availableDays: provider.availability.weeklySchedule
-                            .filter((d) => d.available)
-                            .map((d) => d.day),
-                          isFavorite: isFav,
-                          summaryText: result.summaryText,
-                        })
-                      }
-                    />
-
-                    <button
-                      type="button"
-                      data-testid={`dash-fav-btn-${provider.profile.id}`}
-                      aria-pressed={isFav}
-                      onClick={() =>
-                        toggleUserFavoriteProvider(
-                          activeUserId,
-                          provider.profile.id
-                        )
-                      }
-                      className={`min-h-[38px] px-3 py-1.5 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
-                        isFav
-                          ? 'bg-amber-50 border-amber-400 text-amber-950'
-                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Bookmark
-                        className={`w-3.5 h-3.5 ${
-                          isFav ? 'fill-amber-500 text-amber-600' : ''
-                        }`}
-                        aria-hidden="true"
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <SpeechButton
+                        compact
+                        speechId={`dash-card-${provider.profile.id}`}
+                        label="読み上げ"
+                        getText={() =>
+                          buildProviderCardSpeechText({
+                            name: provider.profile.name,
+                            score: result.breakdown.totalScore,
+                            judgment: result.judgment,
+                            locationCity: provider.profile.locationCity,
+                            coverageAreas: provider.profile.coverageAreas,
+                            services: provider.profile.serviceTypes,
+                            acceptanceStatus: provider.availability.acceptanceStatus,
+                            availableDays: provider.availability.weeklySchedule
+                              .filter((d) => d.available)
+                              .map((d) => d.day),
+                            isFavorite: isFav,
+                            summaryText: result.summaryText,
+                          })
+                        }
                       />
-                      <span>{isFav ? 'お気に入り済' : 'お気に入り'}</span>
-                    </button>
 
-                    <button
-                      type="button"
-                      onClick={() => openChatWith(provider.profile.id)}
-                      className="flex-1 min-h-[38px] px-3 py-1.5 rounded-xl border border-teal-700 text-teal-900 bg-white hover:bg-teal-50 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
-                      <span>チャット相談</span>
-                    </button>
+                      <button
+                        type="button"
+                        data-testid={`dash-fav-btn-${provider.profile.id}`}
+                        aria-pressed={isFav}
+                        onClick={() =>
+                          toggleUserFavoriteProvider(
+                            activeUserId,
+                            provider.profile.id
+                          )
+                        }
+                        className={`min-h-[38px] px-3 py-1.5 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors ${
+                          isFav
+                            ? 'bg-amber-50 border-amber-400 text-amber-950'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Bookmark
+                          className={`w-3.5 h-3.5 ${
+                            isFav ? 'fill-amber-500 text-amber-600' : ''
+                          }`}
+                          aria-hidden="true"
+                        />
+                        <span>{isFav ? 'お気に入り済' : 'お気に入り'}</span>
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() => openProviderDetail(provider.profile.id)}
-                      className="flex-1 min-h-[38px] px-3 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white font-bold text-xs flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
-                    >
-                      <span>詳細を見る</span>
-                      <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
+                      <button
+                        type="button"
+                        disabled={isPaused}
+                        onClick={() => openChatWith(provider.profile.id)}
+                        className={`flex-1 min-h-[38px] px-3 py-1.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-1 whitespace-nowrap ${
+                          isPaused
+                            ? 'bg-slate-200 border-slate-300 text-slate-500 cursor-not-allowed'
+                            : 'border-teal-700 text-teal-900 bg-white hover:bg-teal-50 cursor-pointer'
+                        }`}
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>{isPaused ? '受付確認中' : 'チャット相談'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => openProviderDetail(provider.profile.id)}
+                        className="flex-1 min-h-[38px] px-3 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white font-bold text-xs flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <span>詳細を見る</span>
+                        <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              }
+            )}
           </div>
         )}
       </section>

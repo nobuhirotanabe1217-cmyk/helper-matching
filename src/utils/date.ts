@@ -92,3 +92,30 @@ export function formatJapaneseDate(isoDate: string | undefined): string {
   if (!parsed) return '未更新';
   return `${parsed.getFullYear()}年${parsed.getMonth() + 1}月${parsed.getDate()}日`;
 }
+
+export function formatJapaneseMonthDay(isoDate: string | undefined): string {
+  const parsed = isoDate ? parseIsoDateLocal(isoDate) : null;
+  if (!parsed) return '未設定';
+  return `${parsed.getMonth() + 1}月${parsed.getDate()}日`;
+}
+
+export function formatJapaneseMonthOnly(isoDate: string | undefined): string {
+  const parsed = isoDate ? parseIsoDateLocal(isoDate) : null;
+  if (!parsed) return '';
+  return `${parsed.getMonth() + 1}月`;
+}
+
+export function getEffectiveReferenceDate(
+  offsetDays: number = 0,
+  baseDate: Date = new Date()
+): Date {
+  if (!offsetDays) return baseDate;
+  return new Date(
+    baseDate.getFullYear(),
+    baseDate.getMonth(),
+    baseDate.getDate() + offsetDays,
+    baseDate.getHours(),
+    baseDate.getMinutes(),
+    baseDate.getSeconds()
+  );
+}

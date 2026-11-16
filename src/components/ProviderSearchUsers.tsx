@@ -25,6 +25,7 @@ import {
   ServiceType,
 } from '../types/domain';
 import { getCurrentYearMonth } from '../utils/date';
+import { getUserFreshnessInfo } from '../utils/freshness';
 import { calculateMatchResult } from '../utils/matching';
 import {
   doesUserMatchProviderAcceptanceFilter,
@@ -36,6 +37,10 @@ import {
   ServiceIllustration,
   WeeklyDayStrip,
 } from './VisualHelpers';
+import {
+  UserConfirmedDateBadge,
+  UserRecruitmentStatusBadge,
+} from './FreshnessBadges';
 import { HelpTooltip } from './HelpTooltip';
 import { SpeechButton } from './SpeechButton';
 import {
@@ -72,11 +77,13 @@ export const ProviderSearchUsers: React.FC = () => {
     setShowChatUpgradeModal,
     navigateTo,
     openRegistrationScreen,
+    effectiveReferenceDate,
   } = useAppState();
 
   const [filterService, setFilterService] = useState<ServiceType | 'all'>('all');
   const [filterArea, setFilterArea] = useState<string>('all');
   const [filterDay, setFilterDay] = useState<DayOfWeek | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'recruiting'>('all');
   const [showFilters, setShowFilters] = useState<boolean>(false);
 
   const [requestingUserId, setRequestingUserId] = useState<string | null>(null);
@@ -89,20 +96,26 @@ export const ProviderSearchUsers: React.FC = () => {
     setFilterService('all');
     setFilterArea('all');
     setFilterDay('all');
+    setStatusFilter('all');
   };
 
   const overallAccess = verifyProviderChatAccess({
     subscription: currentProviderSubscription,
     plans: subscriptionPlans,
     allProviderChatRequests: chatRequests,
-    currentYearMonth: getCurrentYearMonth(),
+    currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
   });
 
   const evaluatedUsers = userProfiles
     .map((u) => {
       const bundle = getUserBundleById(u.id);
       if (!bundle) return null;
-      const match = calculateMatchResult(bundle, currentProviderBundle);
+      const userFreshness = getUserFreshnessInfo(u, effectiveReferenceDate);
+      const match = calculateMatchResult(
+        bundle,
+        currentProviderBundle,
+        effectiveReferenceDate
+      );
       const interaction = interactions.find(
         (i) => i.userId === u.id && i.providerId === activeProviderId
       );
@@ -118,6 +131,7 @@ export const ProviderSearchUsers: React.FC = () => {
       });
       return {
         bundle,
+        userFreshness,
         match,
         caseStatus: interaction?.caseStatus || '未対応',
         isUserFavoritedUs: Boolean(interaction?.isUserFavorite),
@@ -148,6 +162,9 @@ export const ProviderSearchUsers: React.FC = () => {
           return false;
         }
       }
+      if (statusFilter === 'recruiting' && item.userFreshness.effectiveStatus !== '募集中') {
+        return false;
+      }
       if (filterDay !== 'all') {
         if (!item.bundle.preferences.preferredDays.includes(filterDay)) {
           return false;
@@ -156,6 +173,9 @@ export const ProviderSearchUsers: React.FC = () => {
       return true;
     })
     .sort((a, b) => {
+      if (a.userFreshness.effectiveStatus !== b.userFreshness.effectiveStatus) {
+        return a.userFreshness.effectiveStatus === '募集中' ? -1 : 1;
+      }
       if (
         a.match.judgment === 'マッチング対象外' &&
         b.match.judgment !== 'マッチング対象外'
@@ -182,7 +202,7 @@ export const ProviderSearchUsers: React.FC = () => {
       plans: subscriptionPlans,
       chatRequest: existingReq,
       allProviderChatRequests: chatRequests,
-      currentYearMonth: getCurrentYearMonth(),
+      currentYearMonth: getCurrentYearMonth(effectiveReferenceDate),
     });
     if (!access.canRequestChat && !access.canSendMessage) {
       setShowChatUpgradeModal(true);
@@ -305,18 +325,45 @@ export const ProviderSearchUsers: React.FC = () => {
 
         {/* 絞り込みバー */}
         <div className="pt-2 border-t border-slate-100 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setShowFilters(!showFilters)}
-              aria-expanded={showFilters}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer"
-            >
-              <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
-              <span>
-                条件で絞り込む{showFilters ? '（閉じる）' : '（開く）'}
-              </span>
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowFilters(!showFilters)}
+                aria-expanded={showFilters}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer"
+              >
+                <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+                <span>
+                  条件で絞り込む{showFilters ? '（閉じる）' : '（開く）'}
+                </span>
+              </button>
+
+              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
+                    statusFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  すべて表示
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('recruiting')}
+                  className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
+                    statusFilter === 'recruiting'
+                      ? 'bg-teal-800 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  募集中のみ
+                </button>
+              </div>
+            </div>
 
             <button
               type="button"
@@ -423,6 +470,7 @@ export const ProviderSearchUsers: React.FC = () => {
         {evaluatedUsers.map(
           ({
             bundle,
+            userFreshness,
             match,
             caseStatus,
             isUserFavoritedUs,
@@ -434,11 +482,17 @@ export const ProviderSearchUsers: React.FC = () => {
               .map((s) => s.split('（')[0])
               .join('・');
             const stage2Unlocked = disclosure.stage >= 2;
+            const isPausedUser = userFreshness.effectiveStatus === '休止中';
 
             return (
               <article
                 key={profile.id}
-                className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 space-y-4"
+                data-testid={`provider-user-card-${profile.id}`}
+                className={`rounded-3xl border p-5 sm:p-6 space-y-4 transition-opacity ${
+                  isPausedUser
+                    ? 'bg-slate-100/80 border-slate-300 opacity-75'
+                    : 'bg-white border-slate-200'
+                }`}
               >
                 <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
                   <div className="flex items-start gap-3.5 min-w-0">
@@ -446,8 +500,10 @@ export const ProviderSearchUsers: React.FC = () => {
                       service={needs.desiredServices[0] || '居宅介護'}
                       className="w-12 h-12 sm:w-14 sm:h-14 shrink-0"
                     />
-                    <div className="space-y-1 min-w-0">
+                    <div className="space-y-1.5 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
+                        <UserRecruitmentStatusBadge info={userFreshness} />
+                        <UserConfirmedDateBadge info={userFreshness} />
                         <span className="font-bold text-teal-800">
                           希望サービス：{needs.desiredServices.join(' / ')}
                         </span>
